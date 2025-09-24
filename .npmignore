@@ -8,6 +8,8 @@ tsconfig.json
 test/
 examples/
 debug-*.js
+*-output.html
+test*.html
 
 # IDE and editor files
 .vscode/
@@ -19,20 +21,39 @@ debug-*.js
 .DS_Store
 Thumbs.db
 
-# Git
+# Git and version control
 .git/
 .gitignore
+.claude/
 
-# Documentation (keep README.md but exclude others)
-docs/
+# Documentation (keep README.md but exclude development docs)
 CLAUDE.md
+NPM_PUBLISH_GUIDE.md
 
 # Build artifacts that shouldn't be published
 node_modules/
 coverage/
 .nyc_output/
+.eslintcache
 
 # Temporary files
-temp.txt
-*-output.html
-extracted_hwpx/
+temp*.txt
+temp*.hwpx
+extracted_*/
+
+# Package manager files
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Environment and config files
+.env
+.env.local
+.env.*.local
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# Development reference folders
+hwp2hwpx-java/

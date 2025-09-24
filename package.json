@@ -1,7 +1,7 @@
 {
   "name": "@ssabrojs/hwpxjs",
-  "version": "0.1.0",
-  "description": "HWPX(OWPML) 문서 파싱 및 텍스트/메타데이터 추출을 위한 TypeScript 라이브러리",
+  "version": "0.2.0",
+  "description": "HWPX(OWPML) 문서 파싱 및 HWP 변환을 위한 TypeScript 라이브러리 - 텍스트/HTML 추출, 이미지/스타일 지원",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

@@ -54,3 +54,4 @@ export interface HwpxReaderApi {
   listImages(): Promise<string[]>;
 }
 
+

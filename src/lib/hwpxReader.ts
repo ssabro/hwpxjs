@@ -54,6 +54,8 @@ export class HwpxReader implements HwpxReaderInterface {
   private zip: JSZip | null = null;
   private files: HwpxFileMap = {};
   private encryptedCache: boolean | null = null;
+  private characterProperties: Map<string, any> = new Map();
+  private fontFaces: Map<string, any> = new Map();
 
   async loadFromArrayBuffer(buffer: ArrayBuffer): Promise<void> {
     const zip = await JSZip.loadAsync(buffer);
@@ -84,6 +86,9 @@ export class HwpxReader implements HwpxReaderInterface {
       // not strictly necessary now; reserved for future rootfile discovery
       void cx;
     }
+
+    // Parse styles from header.xml
+    this.parseStyleDefinitions();
   }
 
   private isLikelyHwpxMime(m: string): boolean {
@@ -556,25 +561,50 @@ export class HwpxReader implements HwpxReaderInterface {
       }
     }
 
-    // Styles (very minimal): bold/italic/underline
+    // Styles: Resolve charPrIDRef to actual character properties
     if (flags.enableStyles) {
-      const charPr = run?.["hp:charPr"] ?? run?.charPr;
-      let open = "";
-      let close = "";
-      const styleParts: string[] = [];
-      const bold = charPr?.["@bold"] === "true" || charPr?.["@b"] === "true";
-      const italic = charPr?.["@italic"] === "true" || charPr?.["@i"] === "true";
-      const underline = charPr?.["@underline"] === "true" || charPr?.["@u"] === "true";
-      const color = charPr?.["@color"] ?? charPr?.["@fontColor"];
-      const size = charPr?.["@sz"] ?? charPr?.["@size"];
-      if (bold) { open += "<strong>"; close = "</strong>" + close; }
-      if (italic) { open += "<em>"; close = "</em>" + close; }
-      if (underline) styleParts.push("text-decoration:underline");
-      if (typeof color === "string" && color) styleParts.push(`color:${this.normalizeColor(color)}`);
-      if (typeof size === "string" || typeof size === "number") styleParts.push(`font-size:${this.normalizeSize(size)}`);
-      const styleAttr = styleParts.length ? ` style="${styleParts.join(";")}"` : "";
-      if (open || styleAttr) {
-        html = `${open}<span${styleAttr}>${html}</span>${close}`;
+      const charPrId = run?.["@charPrIDRef"];
+      if (charPrId && this.characterProperties.has(charPrId)) {
+        const charProps = this.characterProperties.get(charPrId);
+        let open = "";
+        let close = "";
+        const styleParts: string[] = [];
+
+        // Apply formatting
+        if (charProps?.bold) {
+          open += "<strong>";
+          close = "</strong>" + close;
+        }
+        if (charProps?.italic) {
+          open += "<em>";
+          close = "</em>" + close;
+        }
+
+        // Handle underline
+        if (charProps?.underline && charProps.underline?.["@type"] !== "NONE") {
+          styleParts.push("text-decoration:underline");
+        }
+
+        // Handle color
+        if (charProps?.textColor && charProps.textColor !== "#000000") {
+          styleParts.push(`color:${this.normalizeColor(charProps.textColor)}`);
+        }
+
+        // Handle font size (convert HWPUNIT to points)
+        if (charProps?.height) {
+          const sizeInPt = this.convertHwpUnitToPoints(charProps.height);
+          styleParts.push(`font-size:${sizeInPt}pt`);
+        }
+
+        // Handle background color
+        if (charProps?.shadeColor && charProps.shadeColor !== "none" && charProps.shadeColor !== "#FFFFFF") {
+          styleParts.push(`background-color:${this.normalizeColor(charProps.shadeColor)}`);
+        }
+
+        const styleAttr = styleParts.length ? ` style="${styleParts.join(";")}"` : "";
+        if (open || styleAttr) {
+          html = `${open}<span${styleAttr}>${html}</span>${close}`;
+        }
       }
     }
 
@@ -654,6 +684,84 @@ export class HwpxReader implements HwpxReaderInterface {
     const n = typeof sz === 'number' ? sz : Number(sz);
     if (!isNaN(n)) return `${n}pt`;
     return String(sz);
+  }
+
+  private convertHwpUnitToPoints(hwpUnit: string | number): number {
+    // HWPUNIT is approximately 1/100th of a point
+    // 1000 HWPUNIT = 10 points
+    const units = typeof hwpUnit === 'number' ? hwpUnit : parseInt(String(hwpUnit), 10);
+    return Math.round((units / 100) * 10) / 10; // Round to 1 decimal place
+  }
+
+  private parseStyleDefinitions(): void {
+    // Clear existing definitions
+    this.characterProperties.clear();
+    this.fontFaces.clear();
+
+    // Find and parse header.xml
+    const headerXml = this.getTextFile("Contents/header.xml");
+    if (!headerXml) return;
+
+    try {
+      const header = this.parseXml<any>(headerXml);
+      const root = header?.head ?? header;
+      if (!root) {
+        console.log("No root found in header");
+        return;
+      }
+
+      // Character properties are in head/refList/charProperties
+      const refList = root?.refList;
+      if (!refList) {
+        console.log("No refList found, available keys:", Object.keys(root));
+        return;
+      }
+
+      // Parse font faces
+      const fontfaces = refList?.fontfaces;
+      if (fontfaces?.fontface) {
+        const fonts = Array.isArray(fontfaces.fontface) ? fontfaces.fontface : [fontfaces.fontface];
+        for (const font of fonts) {
+          const id = font?.["@id"];
+          if (id) {
+            this.fontFaces.set(id, font);
+          }
+        }
+      }
+
+      // Parse character properties from refList
+      const charProperties = refList?.charProperties;
+      if (charProperties?.charPr) {
+        const charPrs = Array.isArray(charProperties.charPr) ? charProperties.charPr : [charProperties.charPr];
+        for (const charPr of charPrs) {
+          const id = charPr?.["@id"];
+          if (id) {
+            this.characterProperties.set(id, this.processCharacterProperties(charPr));
+          }
+        }
+      }
+    } catch (error) {
+      // Silent fail - styles are optional
+      console.warn("Failed to parse style definitions:", error);
+    }
+  }
+
+  private processCharacterProperties(charPr: any): any {
+    // Bold is indicated by presence of <hh:bold/> element (after namespace removal, becomes 'bold')
+    const hasBold = charPr?.bold !== undefined;
+    const hasItalic = charPr?.italic !== undefined;
+
+    return {
+      height: charPr?.["@height"], // Font size in HWPUNIT
+      textColor: charPr?.["@textColor"], // Text color
+      shadeColor: charPr?.["@shadeColor"], // Background color
+      bold: hasBold, // Bold formatting (element presence)
+      italic: hasItalic, // Italic formatting (element presence)
+      underline: charPr?.underline, // Underline info
+      strikeout: charPr?.strikeout, // Strikeout info
+      fontRef: charPr?.fontRef, // Font reference
+      raw: charPr // Keep original for debugging
+    };
   }
 
   private detectMimeType(path: string): string {

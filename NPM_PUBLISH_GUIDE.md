@@ -38,6 +38,7 @@ ls dist/
 # CLI 기능 테스트
 node dist/cli.js --help
 node dist/cli.js txt test/test1.hwpx
+node dist/cli.js html test/test1.hwpx > test1.html
 ```
 
 ## 4. 배포 미리보기

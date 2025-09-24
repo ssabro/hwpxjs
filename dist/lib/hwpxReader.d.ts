@@ -3,6 +3,8 @@ export declare class HwpxReader implements HwpxReaderInterface {
     private zip;
     private files;
     private encryptedCache;
+    private characterProperties;
+    private fontFaces;
     loadFromArrayBuffer(buffer: ArrayBuffer): Promise<void>;
     private isLikelyHwpxMime;
     private getTextFile;
@@ -25,6 +27,9 @@ export declare class HwpxReader implements HwpxReaderInterface {
     private resolveBinaryPath;
     private normalizeColor;
     private normalizeSize;
+    private convertHwpUnitToPoints;
+    private parseStyleDefinitions;
+    private processCharacterProperties;
     private detectMimeType;
     private toBase64;
     private extractTextFromNode;
