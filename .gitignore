@@ -174,4 +174,8 @@ hwp2hwpx-java/
 # Test files and extracted data
 test/
 
+# Development documentation
+CLAUDE.md
+NPM_PUBLISH_GUIDE.md
+
 # Add any project-specific files or patterns here
