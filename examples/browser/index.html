@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HWPX 브라우저 데모</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- JSZip UMD (글로벌 JSZip) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>HWPX 브라우저 데모 (Drag & Drop)</h1>
+    <p>.hwpx 파일을 아래 영역에 드롭하세요.</p>
+  </header>
+
+  <main>
+    <div id="dropzone" class="dropzone">여기에 파일을 드래그</div>
+    <div class="outputs">
+      <section>
+        <h2>요약</h2>
+        <pre id="summary"></pre>
+      </section>
+      <section>
+        <h2>텍스트</h2>
+        <pre id="text"></pre>
+      </section>
+      <section>
+        <h2>HTML</h2>
+        <div id="html"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="./app.js"></script>
+  </body>
+  </html>
+
+

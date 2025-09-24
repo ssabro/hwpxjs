@@ -1,0 +1,38 @@
+# Development files
+src/
+tsconfig.json
+*.log
+*.tgz
+
+# Test files
+test/
+examples/
+debug-*.js
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation (keep README.md but exclude others)
+docs/
+CLAUDE.md
+
+# Build artifacts that shouldn't be published
+node_modules/
+coverage/
+.nyc_output/
+
+# Temporary files
+temp.txt
+*-output.html
+extracted_hwpx/

@@ -1,0 +1,59 @@
+{
+  "name": "@ssabrojs/hwpxjs",
+  "version": "0.1.0",
+  "description": "HWPX(OWPML) 문서 파싱 및 텍스트/메타데이터 추출을 위한 TypeScript 라이브러리",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "hwpxjs": "dist/cli.js",
+    "hwpx": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "HWPX",
+    "OWPML",
+    "Hancom",
+    "parser",
+    "document"
+  ],
+  "author": "ssabro <ssabro@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ssabro/hwpxjs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ssabro/hwpxjs/issues"
+  },
+  "homepage": "https://github.com/ssabro/hwpxjs#readme",
+  "dependencies": {
+    "fast-xml-parser": "^5.2.5",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.2"
+  }
+}

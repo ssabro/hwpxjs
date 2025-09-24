@@ -1,0 +1,34 @@
+import type { HwpxDocumentInfo, HwpxReaderApi as HwpxReaderInterface, HwpxTextExtractOptions, HwpxHtmlOptions } from "./types.js";
+export declare class HwpxReader implements HwpxReaderInterface {
+    private zip;
+    private files;
+    private encryptedCache;
+    loadFromArrayBuffer(buffer: ArrayBuffer): Promise<void>;
+    private isLikelyHwpxMime;
+    private getTextFile;
+    private findFilePathIgnoreCase;
+    private parseXml;
+    private summarizePackage;
+    private getSectionPathsBySpine;
+    private detectEncryption;
+    private containsEncryptionMarker;
+    private readMetadata;
+    getDocumentInfo(): Promise<HwpxDocumentInfo>;
+    extractText(options?: HwpxTextExtractOptions): Promise<string>;
+    applyTemplateToText(raw: string, data: Record<string, unknown>): string;
+    extractHtml(options?: HwpxHtmlOptions): Promise<string>;
+    private getAlignStyle;
+    private renderNodeToHtml;
+    private collectAllText;
+    private renderRunToHtml;
+    private findBinRefInRun;
+    private resolveBinaryPath;
+    private normalizeColor;
+    private normalizeSize;
+    private detectMimeType;
+    private toBase64;
+    private extractTextFromNode;
+    private escapeHtml;
+    listImages(): Promise<string[]>;
+}
+export default HwpxReader;
