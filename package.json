@@ -1,11 +1,12 @@
 {
   "name": "@ssabrojs/hwpxjs",
-  "version": "0.2.0",
-  "description": "HWPX(OWPML) 문서 파싱 및 HWP 변환을 위한 TypeScript 라이브러리 - 텍스트/HTML 추출, 이미지/스타일 지원",
+  "version": "0.4.0",
+  "description": "HWPX(OWPML)/HWP 5.0(CFB/OLE2) 문서 파싱 + 변환 TypeScript 라이브러리. Markdown·HTML 양방향 변환, 표/이미지/폰트/스타일 보존, 브라우저 ESM 번들 제공.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "browser": "dist/browser/hwpxjs.browser.mjs",
   "bin": {
     "hwpxjs": "dist/cli.js",
     "hwpx": "dist/cli.js"
@@ -13,30 +14,54 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": "./dist/browser/hwpxjs.browser.mjs",
       "import": "./dist/index.js"
-    }
+    },
+    "./browser": "./dist/browser/hwpxjs.browser.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:browser",
+    "build:browser": "node scripts/build-browser.mjs",
     "clean": "rimraf dist",
-    "prepublishOnly": "npm run build"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "publishConfig": {
     "access": "public"
   },
   "keywords": [
+    "HWP",
     "HWPX",
     "OWPML",
+    "CFB",
+    "OLE2",
     "Hancom",
+    "한글",
+    "한컴",
+    "한글문서",
     "parser",
-    "document"
+    "converter",
+    "document",
+    "document-conversion",
+    "markdown",
+    "html",
+    "ZIP",
+    "XML",
+    "korean",
+    "typescript",
+    "browser",
+    "esm"
   ],
   "author": "ssabro <ssabro@gmail.com>",
   "repository": {
@@ -48,12 +73,19 @@
   },
   "homepage": "https://github.com/ssabro/hwpxjs#readme",
   "dependencies": {
+    "cfb": "^1.2.2",
     "fast-xml-parser": "^5.2.5",
-    "jszip": "^3.10.1"
+    "htmlparser2": "^12.0.0",
+    "jszip": "^3.10.1",
+    "marked": "^18.0.2",
+    "pako": "^2.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@types/pako": "^2.0.3",
+    "esbuild": "^0.28.0",
     "rimraf": "^6.0.1",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.5"
   }
 }

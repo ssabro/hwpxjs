@@ -2,69 +2,96 @@
 import { readFile } from "node:fs/promises";
 import HwpxReader from "./lib/hwpxReader.js";
 import HwpxWriter from "./lib/writer.js";
-import { HwpConverter } from "./lib/hwpConverter.js";
+import {
+  detectFormat,
+  parseHwp,
+  hwpToHwpx,
+  hwpToText,
+  hwpToMarkdown,
+  markdownToHwpx,
+  htmlToHwpx,
+} from "./lib/hwp/index.js";
 
 async function main() {
   const [command, inputPath, maybeOut] = process.argv.slice(2);
   if (!command || !inputPath) {
-    console.error("Usage: hwpxjs <inspect|txt|html> <file.hwpx> | hwpxjs batch <folder> <outFolder> | hwpxjs html:tpl <file.hwpx> <data.json> | hwpxjs batch:tpl <inFolder> <dataFolder> <outFolder> | hwpxjs write:txt <textfile> <out.hwpx> | hwpxjs convert:hwp <file.hwp> <out.hwpx> | hwpxjs hwp:txt <file.hwp>");
+    console.error(
+      "Usage:\n" +
+      "  hwpxjs inspect <file.hwpx>\n" +
+      "  hwpxjs txt <file.hwpx|file.hwp>\n" +
+      "  hwpxjs html <file.hwpx>\n" +
+      "  hwpxjs md <file.hwpx|file.hwp>      # Markdown 추출\n" +
+      "  hwpxjs html:tpl <file.hwpx> <data.json>\n" +
+      "  hwpxjs batch <inFolder> <outFolder>\n" +
+      "  hwpxjs batch:tpl <inFolder> <dataFolder> <outFolder>\n" +
+      "  hwpxjs write:txt <textfile> <out.hwpx>\n" +
+      "  hwpxjs md:hwpx <file.md> <out.hwpx>    # Markdown → HWPX\n" +
+      "  hwpxjs html:hwpx <file.html> <out.hwpx># HTML → HWPX\n" +
+      "  hwpxjs convert:hwp <file.hwp> <out.hwpx>\n" +
+      "  hwpxjs hwp:txt <file.hwp>\n" +
+      "  hwpxjs hwp:md <file.hwp>"
+    );
     process.exit(1);
   }
 
-  // hwp:txt 명령어 - HWP 파일에서 텍스트만 추출
   if (command === "hwp:txt") {
-    const converter = new HwpConverter({ verbose: false });
-
-    try {
-      const text = await converter.convertHwpToText(inputPath);
-      console.log(text);
-    } catch (error) {
-      console.error("✗ Failed to extract text from HWP file:");
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    }
+    const buf = await readFile(inputPath);
+    const ab = toArrayBuffer(buf);
+    const text = await hwpToText(new Uint8Array(ab));
+    console.log(text);
     return;
   }
 
-  // convert:hwp 명령어는 별도 처리 (Java 라이브러리 사용)
+  if (command === "hwp:md") {
+    const buf = await readFile(inputPath);
+    const ab = toArrayBuffer(buf);
+    const md = await hwpToMarkdown(new Uint8Array(ab));
+    console.log(md);
+    return;
+  }
+
+  if (command === "md:hwpx") {
+    const outPath = maybeOut;
+    if (!outPath) {
+      console.error("Usage: hwpxjs md:hwpx <input.md> <output.hwpx>");
+      process.exit(1);
+    }
+    const md = await readFile(inputPath, "utf-8");
+    const bytes = await markdownToHwpx(md);
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(outPath, bytes);
+    console.log(`Wrote ${outPath}`);
+    return;
+  }
+
+  if (command === "html:hwpx") {
+    const outPath = maybeOut;
+    if (!outPath) {
+      console.error("Usage: hwpxjs html:hwpx <input.html> <output.hwpx>");
+      process.exit(1);
+    }
+    const html = await readFile(inputPath, "utf-8");
+    const bytes = await htmlToHwpx(html);
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(outPath, bytes);
+    console.log(`Wrote ${outPath}`);
+    return;
+  }
+
   if (command === "convert:hwp") {
     const outPath = maybeOut;
     if (!outPath) {
       console.error("Usage: hwpxjs convert:hwp <input.hwp> <output.hwpx>");
       process.exit(1);
     }
-
-    const converter = new HwpConverter({ verbose: true });
-
-    // Check if converter is available
-    const isAvailable = await converter.isAvailable();
-    if (!isAvailable) {
-      console.error("HWP converter is not available.");
-      process.exit(1);
-    }
-
-    console.log("Converting HWP to HWPX...");
-    console.log(`Input: ${inputPath}`);
-    console.log(`Output: ${outPath}`);
-
-    const result = await converter.convertHwpToHwpx(inputPath, outPath);
-
-    if (result.success) {
-      console.log("✓ Conversion completed successfully");
-      console.log(`Output saved to: ${result.outputPath}`);
-    } else {
-      console.error("✗ Conversion failed:");
-      console.error(result.error);
-      if (result.stderr) {
-        console.error("Java error output:");
-        console.error(result.stderr);
-      }
-      process.exit(1);
-    }
+    const buf = await readFile(inputPath);
+    const bytes = await hwpToHwpx(new Uint8Array(toArrayBuffer(buf)));
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(outPath, bytes);
+    console.log(`Wrote ${outPath}`);
     return;
   }
 
-  // write:txt 명령어는 별도 처리 (텍스트 파일에서 HWPX 생성)
   if (command === "write:txt") {
     const textPath = inputPath;
     const outPath = maybeOut;
@@ -81,9 +108,34 @@ async function main() {
     return;
   }
 
+  // 자동 감지: .hwp 파일이 들어오면 hwp:txt 로 라우팅
+  if (command === "txt" && /\.hwp$/i.test(inputPath)) {
+    const buf = await readFile(inputPath);
+    const ab = toArrayBuffer(buf);
+    const text = await hwpToText(new Uint8Array(ab));
+    console.log(text);
+    return;
+  }
+
+  if (command === "md") {
+    if (/\.hwp$/i.test(inputPath)) {
+      const buf = await readFile(inputPath);
+      const md = await hwpToMarkdown(new Uint8Array(toArrayBuffer(buf)));
+      console.log(md);
+      return;
+    }
+    // HWPX 경로
+    const buf = await readFile(inputPath);
+    const reader = new HwpxReader();
+    await reader.loadFromArrayBuffer(toArrayBuffer(buf));
+    const md = await reader.extractMarkdown();
+    console.log(md);
+    return;
+  }
+
   const buf = await readFile(inputPath);
+  const ab = toArrayBuffer(buf);
   const reader = new HwpxReader();
-  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
   await reader.loadFromArrayBuffer(ab);
 
   if (command === "inspect") {
@@ -112,13 +164,12 @@ async function main() {
     }
     const { readFile: rf } = await import("node:fs/promises");
     const json = JSON.parse(await rf(dataPath, "utf-8"));
-    // 텍스트 추출 후 치환 → HTML 변환(간단히 p 래핑)
     const rawText = await reader.extractText({});
-    // @ts-ignore private 접근 회피 없이 간단 래핑을 위해 인스턴스 메서드를 사용
-    const replaced = (reader as any).applyTemplateToText(rawText, json);
+    const replaced = (reader as unknown as { applyTemplateToText: (raw: string, data: unknown) => string })
+      .applyTemplateToText(rawText, json);
     const html = replaced
       .split(/\n+/)
-      .map((line: string) => `<p>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`) 
+      .map((line) => `<p>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`)
       .join("");
     console.log(html);
     return;
@@ -140,8 +191,7 @@ async function main() {
       const inPath = join(inDir, name);
       const buf2 = await rf(inPath);
       const reader2 = new HwpxReader();
-      const ab2 = buf2.buffer.slice(buf2.byteOffset, buf2.byteOffset + buf2.byteLength) as ArrayBuffer;
-      await reader2.loadFromArrayBuffer(ab2);
+      await reader2.loadFromArrayBuffer(toArrayBuffer(buf2));
       const html = await reader2.extractHtml({ embedImages: true });
       const outName = name.replace(/\.hwpx$/i, ".html");
       const outPath = join(outDir, outName);
@@ -168,24 +218,24 @@ async function main() {
       const inPath = join(inDir, name);
       const buf2 = await rf(inPath);
       const reader2 = new HwpxReader();
-      const ab2 = buf2.buffer.slice(buf2.byteOffset, buf2.byteOffset + buf2.byteLength) as ArrayBuffer;
-      await reader2.loadFromArrayBuffer(ab2);
-      // data.json 선정: 동일 파일명.json 우선, 없으면 default.json
-      const jsonName = basename(name, '.hwpx') + '.json';
-      let json: any = {};
+      await reader2.loadFromArrayBuffer(toArrayBuffer(buf2));
+      const jsonName = basename(name, ".hwpx") + ".json";
+      let json: unknown = {};
       try {
-        json = JSON.parse(await rf(join(dataDir, jsonName), 'utf-8'));
+        json = JSON.parse(await rf(join(dataDir, jsonName), "utf-8"));
       } catch {
         try {
-          json = JSON.parse(await rf(join(dataDir, 'default.json'), 'utf-8'));
-        } catch {}
+          json = JSON.parse(await rf(join(dataDir, "default.json"), "utf-8"));
+        } catch {
+          /* ignore */
+        }
       }
       const rawText = await reader2.extractText({});
-      // @ts-ignore 간단 접근
-      const replaced = (reader2 as any).applyTemplateToText(rawText, json);
+      const replaced = (reader2 as unknown as { applyTemplateToText: (raw: string, data: unknown) => string })
+        .applyTemplateToText(rawText, json);
       const html = replaced
         .split(/\n+/)
-        .map((line: string) => `<p>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`)
+        .map((line) => `<p>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`)
         .join("");
       const outName = name.replace(/\.hwpx$/i, ".html");
       const outPath = join(outDir, outName);
@@ -199,8 +249,11 @@ async function main() {
   process.exit(1);
 }
 
+function toArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+}
+
 main().catch((err) => {
   console.error(err?.message || err);
   process.exit(1);
 });
-

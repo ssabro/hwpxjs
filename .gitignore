@@ -171,11 +171,13 @@ tramp
 # Development reference folders
 hwp2hwpx-java/
 
-# Test files and extracted data
-test/
+# Test outputs/extracted artifacts only — vitest 테스트 파일(test/*.test.ts) 은 커밋한다.
+# (test/fixtures/ 만 별도로 ignore — 아래 참조)
 
 # Development documentation
 CLAUDE.md
 NPM_PUBLISH_GUIDE.md
 
 # Add any project-specific files or patterns here
+# Test fixtures (user-supplied, not committed)
+test/fixtures/

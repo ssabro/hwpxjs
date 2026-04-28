@@ -50,6 +50,37 @@ function getOrEmpty<T>(value: T | undefined): T | undefined {
   return value ?? undefined;
 }
 
+/**
+ * fast-xml-parser 의 텍스트 노드는 string 외에도 number/boolean 또는 객체({#text})/배열 형태로
+ * 등장할 수 있다. 모든 케이스를 문자열로 정규화하여 pieces 에 추가한다.
+ */
+function escapeMd(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/([*_`~])/g, "\\$1")
+    .replace(/^([#>])/gm, "\\$1");
+}
+
+function pushTextNode(t: any, pieces: string[]): void {
+  if (t === undefined || t === null) return;
+  if (typeof t === "string") {
+    pieces.push(t);
+    return;
+  }
+  if (typeof t === "number" || typeof t === "boolean") {
+    pieces.push(String(t));
+    return;
+  }
+  if (Array.isArray(t)) {
+    for (const item of t) pushTextNode(item, pieces);
+    return;
+  }
+  if (typeof t === "object") {
+    const inner = t["#text"];
+    if (inner !== undefined) pushTextNode(inner, pieces);
+  }
+}
+
 export class HwpxReader implements HwpxReaderInterface {
   private zip: JSZip | null = null;
   private files: HwpxFileMap = {};
@@ -116,8 +147,12 @@ export class HwpxReader implements HwpxReaderInterface {
       const parser = new XMLParser({
         ignoreAttributes: false,
         attributeNamePrefix: "@",
-        trimValues: true,
+        // 텍스트 내부 공백 보존 — `<hp:t>이것은 </hp:t>` 같은 run 사이 공백이 사라지지 않도록
+        trimValues: false,
         removeNSPrefix: true,
+        // 텍스트 노드 자동 타입 변환 끄기 — "1", "true" 등이 number/boolean 으로 변환되는 것을 방지
+        parseTagValue: false,
+        parseAttributeValue: false,
       });
       const obj = parser.parse(xml);
       return obj as T;
@@ -315,24 +350,7 @@ export class HwpxReader implements HwpxReaderInterface {
       }
       const paras = Array.isArray(ps) ? ps : [ps];
       for (const p of paras) {
-        const runs = p?.run ?? p?.["hp:run"];
-        if (!runs) {
-          // 빈 문단 처리
-          paragraphs.push("");
-          continue;
-        }
-        const runArr = Array.isArray(runs) ? runs : [runs];
-        const textPieces: string[] = [];
-        for (const run of runArr) {
-          // 섹션 설정이나 컨트롤 정보가 있는 run은 건너뛰기
-          if (run?.secPr || run?.ctrl) continue;
-
-          const t = run?.t ?? run?.["hp:t"];
-          if (t === undefined || t === null) continue;
-          if (typeof t === "string") textPieces.push(t);
-          else if (typeof t["#text"] === "string") textPieces.push(t["#text"]);
-        }
-        paragraphs.push(textPieces.join(""));
+        paragraphs.push(this.extractParagraphText(p));
       }
     }
 
@@ -347,6 +365,230 @@ export class HwpxReader implements HwpxReaderInterface {
       if (prv && prv.trim().length > 0) return prv;
     }
     return combined;
+  }
+
+  /**
+   * 한 문단(<hp:p>)에서 텍스트를 추출. 표/이미지 등 인라인 컨트롤이 있으면 셀/내부 문단을 재귀 탐색.
+   *
+   * 표는 셀 단위로 텍스트를 모은 후 같은 행 내 셀은 공백으로, 행 사이는 줄바꿈으로 결합한다.
+   */
+  private extractParagraphText(p: any): string {
+    const runs = p?.run ?? p?.["hp:run"];
+    if (!runs) return "";
+    const runArr = Array.isArray(runs) ? runs : [runs];
+    const pieces: string[] = [];
+    for (const run of runArr) {
+      // 섹션/컬럼 설정 같은 메타 컨트롤은 텍스트 없음 — secPr/ctrl 안에 든 자식까지 무시
+      if (run?.secPr || run?.ctrl) continue;
+
+      // 직접 텍스트
+      const t = run?.t ?? run?.["hp:t"];
+      pushTextNode(t, pieces);
+
+      // 표
+      const tbl = run?.tbl ?? run?.["hp:tbl"];
+      if (tbl) {
+        const tbls = Array.isArray(tbl) ? tbl : [tbl];
+        for (const tb of tbls) {
+          pieces.push(this.extractTableText(tb));
+        }
+      }
+    }
+    return pieces.join("");
+  }
+
+  private extractTableText(tbl: any): string {
+    const trs = tbl?.tr ?? tbl?.["hp:tr"];
+    if (!trs) return "";
+    const trArr = Array.isArray(trs) ? trs : [trs];
+    const rowTexts: string[] = [];
+    for (const tr of trArr) {
+      const tcs = tr?.tc ?? tr?.["hp:tc"];
+      if (!tcs) continue;
+      const tcArr = Array.isArray(tcs) ? tcs : [tcs];
+      const cellTexts: string[] = [];
+      for (const tc of tcArr) {
+        cellTexts.push(this.extractCellText(tc));
+      }
+      rowTexts.push(cellTexts.join(" "));
+    }
+    return rowTexts.join("\n");
+  }
+
+  private extractCellText(tc: any): string {
+    const sub = tc?.subList ?? tc?.["hp:subList"];
+    if (!sub) return "";
+    const ps = sub?.p ?? sub?.["hp:p"];
+    if (!ps) return "";
+    const paras = Array.isArray(ps) ? ps : [ps];
+    return paras.map((q: any) => this.extractParagraphText(q)).join("\n");
+  }
+
+  /**
+   * 문서 전체를 Markdown 으로 변환.
+   * 표는 마크다운 표 (셀 병합은 평탄화), 이미지는 `![](BinData/...)`.
+   */
+  async extractMarkdown(options?: { embedImages?: boolean; imageSrcResolver?: (binPath: string) => string }): Promise<string> {
+    if (!this.zip) throw new HwpxNotLoadedError();
+    const summary = this.summarizePackage();
+    if (summary.hasEncryptionInfo) {
+      throw new HwpxEncryptedDocumentError();
+    }
+    let sectionPaths = this.getSectionPathsBySpine() ?? Object.keys(this.files)
+      .filter((p) => /^contents\/section\d+\.xml$/.test(p.toLowerCase()))
+      .sort();
+    if (sectionPaths.length === 0) {
+      const candidates = Object.keys(this.files).filter((p) => p.startsWith("Contents/") && p.toLowerCase().endsWith(".xml"));
+      for (const p of candidates) {
+        const xmlText = this.getTextFile(p);
+        if (!xmlText) continue;
+        const xml = this.parseXml<any>(xmlText);
+        if (xml && (xml.sec || xml.section || xml["hp:section"])) sectionPaths.push(p);
+      }
+    }
+
+    const blocks: string[] = [];
+    for (const path of sectionPaths) {
+      const xmlText = this.getTextFile(path);
+      if (!xmlText) continue;
+      const xml = this.parseXml<any>(xmlText);
+      const section = xml?.sec ?? xml?.section ?? xml?.["hp:section"];
+      if (!section) continue;
+      const ps = section?.p ?? section?.["hp:p"];
+      if (!ps) continue;
+      const paras = Array.isArray(ps) ? ps : [ps];
+      for (const p of paras) {
+        const md = this.extractParagraphMarkdown(p, options);
+        if (md.trim().length > 0) blocks.push(md);
+      }
+    }
+    return blocks.join("\n\n").trim() + "\n";
+  }
+
+  private extractParagraphMarkdown(
+    p: any,
+    options?: { embedImages?: boolean; imageSrcResolver?: (binPath: string) => string }
+  ): string {
+    const runs = p?.run ?? p?.["hp:run"];
+    if (!runs) return "";
+    const runArr = Array.isArray(runs) ? runs : [runs];
+    const parts: string[] = [];
+
+    let textBuf = "";
+    for (const run of runArr) {
+      if (run?.secPr || run?.ctrl) continue;
+
+      // 텍스트 + charPrIDRef → 굵게/기울임 적용
+      const t = run?.t ?? run?.["hp:t"];
+      const pieces: string[] = [];
+      pushTextNode(t, pieces);
+      let raw = pieces.join("");
+      if (raw.length > 0) {
+        const charPrId = run?.["@charPrIDRef"];
+        if (charPrId !== undefined && this.characterProperties.has(String(charPrId))) {
+          const cs = this.characterProperties.get(String(charPrId));
+          let s = escapeMd(raw);
+          if (cs?.bold) s = `**${s}**`;
+          if (cs?.italic) s = `*${s}*`;
+          textBuf += s;
+        } else {
+          textBuf += escapeMd(raw);
+        }
+      }
+
+      // 표
+      const tbl = run?.tbl ?? run?.["hp:tbl"];
+      if (tbl) {
+        if (textBuf) {
+          parts.push(textBuf);
+          textBuf = "";
+        }
+        const tbls = Array.isArray(tbl) ? tbl : [tbl];
+        for (const tb of tbls) parts.push(this.extractTableMarkdown(tb, options));
+      }
+
+      // 그림
+      const pic = run?.pic ?? run?.["hp:pic"];
+      if (pic) {
+        if (textBuf) {
+          parts.push(textBuf);
+          textBuf = "";
+        }
+        const href = pic?.["@href"];
+        const img = pic?.img ?? pic?.["hc:img"];
+        const ref = img?.["@binaryItemIDRef"];
+        const path = typeof href === "string" ? href : ref ? `BinData/${ref}` : "";
+        if (path) {
+          if (options?.embedImages) {
+            const data = this.files[path];
+            if (data) {
+              const ext = path.split(".").pop()?.toLowerCase() ?? "";
+              const mime = ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : "application/octet-stream";
+              parts.push(`![](data:${mime};base64,${this.toBase64(data)})`);
+            } else {
+              parts.push(`![](${path})`);
+            }
+          } else if (options?.imageSrcResolver) {
+            parts.push(`![](${options.imageSrcResolver(path)})`);
+          } else {
+            parts.push(`![](${path})`);
+          }
+        }
+      }
+    }
+    if (textBuf) parts.push(textBuf);
+    return parts.join("\n\n");
+  }
+
+  private extractTableMarkdown(
+    tbl: any,
+    options?: { embedImages?: boolean; imageSrcResolver?: (binPath: string) => string }
+  ): string {
+    const trs = tbl?.tr ?? tbl?.["hp:tr"];
+    if (!trs) return "";
+    const trArr = Array.isArray(trs) ? trs : [trs];
+
+    // 행/셀 텍스트 모음 (병합은 무시 — 마크다운 표 한계)
+    const rows: string[][] = [];
+    let maxCols = 0;
+    for (const tr of trArr) {
+      const tcs = tr?.tc ?? tr?.["hp:tc"];
+      if (!tcs) continue;
+      const tcArr = Array.isArray(tcs) ? tcs : [tcs];
+      const cellTexts: string[] = [];
+      for (const tc of tcArr) {
+        const sub = tc?.subList ?? tc?.["hp:subList"];
+        if (!sub) {
+          cellTexts.push("");
+          continue;
+        }
+        const cps = sub?.p ?? sub?.["hp:p"];
+        if (!cps) {
+          cellTexts.push("");
+          continue;
+        }
+        const cellParas = Array.isArray(cps) ? cps : [cps];
+        const inner = cellParas
+          .map((q: any) => this.extractParagraphMarkdown(q, options))
+          .join(" ")
+          .replace(/\n+/g, " ")
+          .replace(/\|/g, "\\|");
+        cellTexts.push(inner);
+      }
+      if (cellTexts.length > maxCols) maxCols = cellTexts.length;
+      rows.push(cellTexts);
+    }
+    if (rows.length === 0) return "";
+    // 모든 행의 셀 수를 maxCols 로 패딩
+    for (const r of rows) {
+      while (r.length < maxCols) r.push("");
+    }
+    const fmt = (cells: string[]) => `| ${cells.map((c) => c || " ").join(" | ")} |`;
+    const lines: string[] = [];
+    lines.push(fmt(rows[0]));
+    lines.push(fmt(new Array(maxCols).fill("---")));
+    for (let i = 1; i < rows.length; i++) lines.push(fmt(rows[i]));
+    return lines.join("\n");
   }
 
   // 아주 단순한 텍스트 템플릿 치환: {{key}} → value (문단 텍스트에만 적용)
@@ -392,6 +634,7 @@ export class HwpxReader implements HwpxReaderInterface {
       });
     }
 
+    const tableClass = options?.tableClassName ?? "hwpx-table";
     const pieces: string[] = [];
     for (const path of sectionPaths) {
       const xmlText = this.getTextFile(path);
@@ -400,48 +643,32 @@ export class HwpxReader implements HwpxReaderInterface {
       const section = xml?.sec ?? xml?.section ?? xml?.["hp:section"];
       if (!section) continue;
 
-      // paragraphs
+      // paragraphs (표가 paragraph 안의 run 에 포함되어 있을 수 있으므로 분리 추출)
       const ps = section?.p ?? section?.["hp:p"];
       if (ps) {
         const paras = Array.isArray(ps) ? ps : [ps];
         for (const p of paras) {
+          // 텍스트와 이미지 등 인라인 컨텐츠
           const inner = this.renderNodeToHtml(p, { enableImages, enableStyles }, options);
           const alignStyle = this.getAlignStyle(p);
           const styleAttr = alignStyle ? ` style="${alignStyle}"` : "";
           pieces.push(`<${paragraphTag}${styleAttr}>${inner}</${paragraphTag}>`);
+
+          // paragraph 내 표는 <p> 형제 요소로 출력 (HTML 에서 <p> 안에 <table> 불가)
+          if (enableTables) {
+            for (const tbl of this.collectTablesInParagraph(p)) {
+              pieces.push(this.renderTableHtml(tbl, tableClass, options));
+            }
+          }
         }
       }
 
-      // minimal tables: hp:tbl > hp:tr > hp:tc (cells)
+      // section 직속 tables (구식 HWPX)
       const tbls = section?.tbl ?? section?.["hp:tbl"];
       if (tbls && enableTables) {
-        const tableClass = options?.tableClassName ?? "hwpx-table";
         const tables = Array.isArray(tbls) ? tbls : [tbls];
         for (const tbl of tables) {
-          const trs = tbl?.tr ?? tbl?.["hp:tr"];
-          const rows = trs ? (Array.isArray(trs) ? trs : [trs]) : [];
-          const rowHtml: string[] = [];
-          rows.forEach((tr: any, rowIndex: number) => {
-            const tcs = tr?.tc ?? tr?.["hp:tc"];
-            const cells = tcs ? (Array.isArray(tcs) ? tcs : [tcs]) : [];
-            const cellHtml: string[] = [];
-            for (const tc of cells) {
-              // cell may contain paragraphs/runs
-              const inner = this.renderNodeToHtml(tc, { enableImages, enableStyles }, options);
-              const colSpan = tc?.["@colSpan"] ?? tc?.["@colspan"] ?? tc?.["@gridSpan"];
-              const rowSpan = tc?.["@rowSpan"] ?? tc?.["@rowspan"];
-              const alignStyle = this.getAlignStyle(tc);
-              const attrs: string[] = [];
-              if (colSpan && String(colSpan) !== "1") attrs.push(` colspan=\"${String(colSpan)}\"`);
-              if (rowSpan && String(rowSpan) !== "1") attrs.push(` rowspan=\"${String(rowSpan)}\"`);
-              if (alignStyle) attrs.push(` style=\"${alignStyle}\"`);
-              const isHeader = options?.tableHeaderFirstRow && rowIndex === 0;
-              const tag = isHeader ? "th" : "td";
-              cellHtml.push(`<${tag}${attrs.join("")}>${inner}</${tag}>`);
-            }
-            rowHtml.push(`<tr>${cellHtml.join("")}</tr>`);
-          });
-          pieces.push(`<table class="${tableClass}">${rowHtml.join("")}</table>`);
+          pieces.push(this.renderTableHtml(tbl, tableClass, options));
         }
       }
     }
@@ -460,6 +687,62 @@ export class HwpxReader implements HwpxReaderInterface {
       }
     }
     return html;
+  }
+
+  private collectTablesInParagraph(p: any): any[] {
+    const out: any[] = [];
+    const runs = p?.run ?? p?.["hp:run"];
+    if (!runs) return out;
+    const runArr = Array.isArray(runs) ? runs : [runs];
+    for (const run of runArr) {
+      if (run?.secPr || run?.ctrl) continue;
+      const tbl = run?.tbl ?? run?.["hp:tbl"];
+      if (!tbl) continue;
+      if (Array.isArray(tbl)) out.push(...tbl);
+      else out.push(tbl);
+    }
+    return out;
+  }
+
+  private renderTableHtml(tbl: any, tableClass: string, options?: HwpxHtmlOptions): string {
+    const trs = tbl?.tr ?? tbl?.["hp:tr"];
+    const rows = trs ? (Array.isArray(trs) ? trs : [trs]) : [];
+    const enableImages = options?.renderImages ?? true;
+    const enableStyles = options?.renderStyles ?? true;
+    const rowHtml: string[] = [];
+    rows.forEach((tr: any, rowIndex: number) => {
+      const tcs = tr?.tc ?? tr?.["hp:tc"];
+      const cells = tcs ? (Array.isArray(tcs) ? tcs : [tcs]) : [];
+      const cellHtml: string[] = [];
+      for (const tc of cells) {
+        // 셀 안 paragraph: <hp:tc><hp:subList><hp:p>...</hp:p></hp:subList></hp:tc>
+        // 또는 직접 <hp:tc><hp:p>... 둘 다 지원
+        const inner = this.renderCellContentHtml(tc, { enableImages, enableStyles }, options);
+        const colSpan = tc?.["@colSpan"] ?? tc?.["@colspan"] ?? tc?.["@gridSpan"];
+        const rowSpan = tc?.["@rowSpan"] ?? tc?.["@rowspan"];
+        const alignStyle = this.getAlignStyle(tc);
+        const attrs: string[] = [];
+        if (colSpan && String(colSpan) !== "1") attrs.push(` colspan="${String(colSpan)}"`);
+        if (rowSpan && String(rowSpan) !== "1") attrs.push(` rowspan="${String(rowSpan)}"`);
+        if (alignStyle) attrs.push(` style="${alignStyle}"`);
+        const isHeader = options?.tableHeaderFirstRow && rowIndex === 0;
+        const tag = isHeader ? "th" : "td";
+        cellHtml.push(`<${tag}${attrs.join("")}>${inner}</${tag}>`);
+      }
+      rowHtml.push(`<tr>${cellHtml.join("")}</tr>`);
+    });
+    return `<table class="${tableClass}">${rowHtml.join("")}</table>`;
+  }
+
+  private renderCellContentHtml(
+    tc: any,
+    flags: { enableImages: boolean; enableStyles: boolean },
+    options?: HwpxHtmlOptions
+  ): string {
+    // subList 우선 (현대 HWPX), 없으면 tc 자체를 노드로 처리
+    const sub = tc?.subList ?? tc?.["hp:subList"];
+    if (sub) return this.renderNodeToHtml(sub, flags, options);
+    return this.renderNodeToHtml(tc, flags, options);
   }
 
   private getAlignStyle(node: any): string | "" {
@@ -705,17 +988,11 @@ export class HwpxReader implements HwpxReaderInterface {
     try {
       const header = this.parseXml<any>(headerXml);
       const root = header?.head ?? header;
-      if (!root) {
-        console.log("No root found in header");
-        return;
-      }
+      if (!root) return;
 
       // Character properties are in head/refList/charProperties
       const refList = root?.refList;
-      if (!refList) {
-        console.log("No refList found, available keys:", Object.keys(root));
-        return;
-      }
+      if (!refList) return;
 
       // Parse font faces
       const fontfaces = refList?.fontfaces;
@@ -740,9 +1017,8 @@ export class HwpxReader implements HwpxReaderInterface {
           }
         }
       }
-    } catch (error) {
+    } catch {
       // Silent fail - styles are optional
-      console.warn("Failed to parse style definitions:", error);
     }
   }
 
