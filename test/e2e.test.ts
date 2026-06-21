@@ -18,11 +18,17 @@ import JSZip from "jszip";
 import HwpxReader from "../src/lib/hwpxReader.js";
 import { markdownToHwpx, htmlToHwpx } from "../src/lib/hwp/index.js";
 
-const MD_PATH = resolve("etc/e2emd.md");
-const md = existsSync(MD_PATH) ? readFileSync(MD_PATH, "utf-8") : null;
+/** test/fixtures(커밋됨) 우선, 없으면 etc(개발 로컬) 폴백. */
+function pickFixture(...candidates: string[]): string | null {
+  for (const c of candidates) if (existsSync(c)) return c;
+  return null;
+}
 
-const IMG_MD_PATH = resolve("etc/e2emd_img.md");
-const imgMd = existsSync(IMG_MD_PATH) ? readFileSync(IMG_MD_PATH, "utf-8") : null;
+const MD_PATH = pickFixture(resolve("test/fixtures/e2emd.md"), resolve("etc/e2emd.md"));
+const md = MD_PATH ? readFileSync(MD_PATH, "utf-8") : null;
+
+const IMG_MD_PATH = pickFixture(resolve("test/fixtures/e2emd_img.md"), resolve("etc/e2emd_img.md"));
+const imgMd = IMG_MD_PATH ? readFileSync(IMG_MD_PATH, "utf-8") : null;
 
 async function roundTripText(bytes: Uint8Array): Promise<string> {
   const r = new HwpxReader();
