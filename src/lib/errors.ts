@@ -13,7 +13,7 @@ export class HwpxEncryptedDocumentError extends Error {
 }
 
 export class InvalidHwpxFormatError extends Error {
-  constructor(message = "유효한 HWPX(mimetype: application/owpml) 문서가 아닙니다.") {
+  constructor(message = "유효한 HWPX(mimetype: application/hwp+zip) 문서가 아닙니다.") {
     super(message);
     this.name = "InvalidHwpxFormatError";
   }

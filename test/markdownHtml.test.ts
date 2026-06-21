@@ -102,7 +102,7 @@ describe("HTML → HWPX", () => {
     const bytes = await htmlToHwpx(html);
     const zip = await JSZip.loadAsync(bytes);
     const sec = await zip.file("Contents/section0.xml")!.async("string");
-    expect(sec).toMatch(/hp:rowSpan="2"/);
+    expect(sec).toMatch(/rowSpan="2"/);
   });
 
   it("ignores script/style content", async () => {

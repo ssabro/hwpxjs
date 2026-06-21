@@ -170,6 +170,10 @@ tramp
 # Project specific ignores
 # Development reference folders
 hwp2hwpx-java/
+etc/
+
+# Plan/review 작업 산출물 (공식 문서는 docs/ 로)
+tmp/
 
 # Test outputs/extracted artifacts only — vitest 테스트 파일(test/*.test.ts) 은 커밋한다.
 # (test/fixtures/ 만 별도로 ignore — 아래 참조)

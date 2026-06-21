@@ -25,6 +25,8 @@ import type {
   HwpParaShape,
   HwpStyle,
   HwpFaceName,
+  ImageResolver,
+  ConvertOptions,
 } from "./types.js";
 
 interface HtmlNode {
@@ -82,6 +84,7 @@ interface BuildContext {
   charShapeIds: Map<string, number>;
   binData: Map<number, { data: Uint8Array; extension: string }>;
   nextBinDataId: number;
+  imageResolver?: ImageResolver;
 }
 
 interface ShapeIds {
@@ -102,13 +105,14 @@ interface InlineState {
   mono: boolean;
 }
 
-export function htmlToHwpDocument(html: string): HwpDocument {
+export function htmlToHwpDocument(html: string, options?: ConvertOptions): HwpDocument {
   const tree = parseToTree(html);
 
   const ctx: BuildContext = {
     charShapeIds: new Map(),
     binData: new Map(),
     nextBinDataId: 1,
+    imageResolver: options?.imageResolver,
   };
 
   const charShapes: HwpCharShape[] = [defaultCharShape()];
@@ -469,23 +473,39 @@ function collectTableParagraph(
   };
   collectTrs(table);
 
+  // rowspan/colspan 점유 그리드로 실제 셀 좌표(colAddr/rowAddr)를 계산한다.
+  // 단순히 셀마다 col 을 1 증가시키면 병합 셀이 점유한 칸을 무시해 좌표가 어긋난다.
   let maxCols = 0;
-  const tcs: { row: number; col: number; isHeader: boolean; node: HtmlNode }[] = [];
+  const occupied = new Set<string>();
+  const tcs: {
+    row: number;
+    col: number;
+    isHeader: boolean;
+    node: HtmlNode;
+    colSpan: number;
+    rowSpan: number;
+  }[] = [];
   for (let r = 0; r < trs.length; r++) {
     let col = 0;
     for (const c of trs[r].children) {
       if (typeof c === "string") continue;
-      if (c.tag === "td" || c.tag === "th") {
-        tcs.push({ row: r, col, isHeader: c.tag === "th", node: c });
-        col++;
+      if (c.tag !== "td" && c.tag !== "th") continue;
+      // 위쪽 행의 rowspan 이나 같은 행 colspan 이 점유한 칸은 건너뛴다.
+      while (occupied.has(`${r},${col}`)) col++;
+      const colSpan = Math.max(1, Number(c.attrs.colspan ?? "1") || 1);
+      const rowSpan = Math.max(1, Number(c.attrs.rowspan ?? "1") || 1);
+      tcs.push({ row: r, col, isHeader: c.tag === "th", node: c, colSpan, rowSpan });
+      for (let dr = 0; dr < rowSpan; dr++) {
+        for (let dc = 0; dc < colSpan; dc++) {
+          occupied.add(`${r + dr},${col + dc}`);
+        }
       }
+      col += colSpan;
+      if (col > maxCols) maxCols = col;
     }
-    if (col > maxCols) maxCols = col;
   }
 
-  const cells: HwpTableCell[] = tcs.map(({ row, col, isHeader, node }) => {
-    const colSpan = Math.max(1, Number(node.attrs.colspan ?? "1") || 1);
-    const rowSpan = Math.max(1, Number(node.attrs.rowspan ?? "1") || 1);
+  const cells: HwpTableCell[] = tcs.map(({ row, col, isHeader, node, colSpan, rowSpan }) => {
     const baseId = isHeader ? ids.idBold : ids.idDefault;
     const runs = collectInlineRuns(node, ids, ctx, { bold: isHeader, italic: false, mono: false }, baseId);
     return {
@@ -517,7 +537,16 @@ function collectTableParagraph(
 function imageNodeToControl(node: HtmlNode, ctx: BuildContext): HwpControl | null {
   const src = node.attrs.src ?? "";
   const match = /^data:([^;]+);base64,(.*)$/i.exec(src);
-  if (!match) return null;
+  if (!match) {
+    // data URI 가 아니면 resolver(주입 시)로 file://·로컬 경로 해석. 없으면 skip.
+    const resolved = src ? ctx.imageResolver?.(src) : null;
+    if (resolved && resolved.data.length > 0) {
+      const id = ctx.nextBinDataId++;
+      ctx.binData.set(id, { data: resolved.data, extension: resolved.extension.toLowerCase() });
+      return { kind: "picture", binDataId: id };
+    }
+    return null;
+  }
   const mime = match[1].toLowerCase();
   const ext =
     mime === "image/png"

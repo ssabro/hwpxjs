@@ -24,6 +24,8 @@ import type {
   HwpParaShape,
   HwpStyle,
   HwpFaceName,
+  ImageResolver,
+  ConvertOptions,
 } from "./types.js";
 
 interface BuildContext {
@@ -33,16 +35,19 @@ interface BuildContext {
   binData: Map<number, { data: Uint8Array; extension: string }>;
   /** 다음에 발급할 binData storageId */
   nextBinDataId: number;
+  /** data URI 가 아닌 이미지(file://·경로)를 바이트로 해석 (선택) */
+  imageResolver?: ImageResolver;
 }
 
 /** Markdown 텍스트를 HwpDocument 로 변환. */
-export function markdownToHwpDocument(md: string): HwpDocument {
+export function markdownToHwpDocument(md: string, options?: ConvertOptions): HwpDocument {
   const tokens = marked.lexer(md);
 
   const ctx: BuildContext = {
     charShapeIds: new Map(),
     binData: new Map(),
     nextBinDataId: 1,
+    imageResolver: options?.imageResolver,
   };
 
   // 기본 charShapes / paraShapes / styles / fontFaces 등록
@@ -471,7 +476,13 @@ function imageTokenToControl(href: string, ctx: BuildContext): HwpControl | null
     ctx.binData.set(id, { data: bytes, extension: ext });
     return { kind: "picture", binDataId: id };
   }
-  // 외부 URL / 상대 경로는 보존 불가 — 런타임 fetch 가 필요. 1차 포팅에서는 skip.
+  // data URI 가 아니면 resolver(주입 시)로 file://·로컬 경로를 해석. 없으면 skip.
+  const resolved = ctx.imageResolver?.(href);
+  if (resolved && resolved.data.length > 0) {
+    const id = ctx.nextBinDataId++;
+    ctx.binData.set(id, { data: resolved.data, extension: resolved.extension.toLowerCase() });
+    return { kind: "picture", binDataId: id };
+  }
   return null;
 }
 

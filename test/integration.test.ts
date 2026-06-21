@@ -49,7 +49,7 @@ describe("HwpxWriter spec compliance", () => {
     const mimetype = zip.file("mimetype");
     expect(mimetype).not.toBeNull();
     const mimeText = await mimetype!.async("string");
-    expect(mimeText).toBe("application/owpml");
+    expect(mimeText).toBe("application/hwp+zip");
 
     // 첫 엔트리가 mimetype 이어야 함
     const names = Object.keys(zip.files);
@@ -172,7 +172,7 @@ describe("HWP integration: 공고문(안) (table with merged cells)", () => {
     const zip = await JSZip.loadAsync(hwpxBytes);
     const sec0 = await zip.file("Contents/section0.xml")!.async("string");
     // 공고문 표는 운행정지명령일 rowSpan=2/3, 운행정지사유 rowSpan=5
-    expect(sec0).toMatch(/hp:rowSpan="[2-9]"/);
+    expect(sec0).toMatch(/rowSpan="[2-9]"/);
   });
 
   it("preserves all 5 vehicle data rows", async () => {
@@ -197,9 +197,9 @@ describe("HWP integration: 공고문(안) (table with merged cells)", () => {
     const header = await zip.file("Contents/header.xml")!.async("string");
     // 굵은 글씨 / 정렬 다양성
     expect(header).toContain("<hh:bold/>");
-    expect(header).toMatch(/hh:horizontal="(CENTER|RIGHT|LEFT)"/);
+    expect(header).toMatch(/horizontal="(CENTER|RIGHT|LEFT)"/);
     // 폰트 face 가 1개 이상
-    expect(header).toMatch(/hh:fontfaces hh:itemCnt="\d+"/);
+    expect(header).toMatch(/hh:fontfaces itemCnt="\d+"/);
   });
 });
 

@@ -5,6 +5,18 @@
 
 import type { FileHeader } from "./fileHeader.js";
 
+/**
+ * 이미지 src(데이터 URI 가 아닌 file://·로컬/상대 경로)를 바이트로 해석하는 resolver.
+ * 코어는 이를 주입받기만 한다(브라우저 안전). Node(CLI) 측에서 fs 기반 구현을 제공한다.
+ * null 을 반환하면 해당 이미지는 스킵된다.
+ */
+export type ImageResolver = (src: string) => { data: Uint8Array; extension: string } | null;
+
+/** md/html → HwpDocument 변환 옵션. */
+export interface ConvertOptions {
+  imageResolver?: ImageResolver;
+}
+
 export interface HwpRun {
   /** 글자 모양 ID (DocInfo의 CHAR_SHAPE 인덱스) */
   charShapeId: number;

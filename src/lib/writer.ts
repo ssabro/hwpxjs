@@ -1,34 +1,39 @@
 import JSZip from "jszip";
+import {
+  MIMETYPE,
+  OWPML_NS,
+  DEFAULT_LINESEG,
+  SEC_PR_XML,
+  makeParaId,
+  escapeXml,
+} from "./hwp/owpml.js";
 
 export interface HwpxWriteOptions {
   title?: string;
   creator?: string;
 }
 
-const NS_HP = "http://www.hancom.co.kr/hwpml/2011/paragraph";
-const NS_HH = "http://www.hancom.co.kr/hwpml/2011/head";
-const NS_HC = "http://www.hancom.co.kr/hwpml/2011/core";
 const NS_HA = "http://www.hancom.co.kr/hwpml/2011/app";
-const NS_OPF = "http://www.idpf.org/2007/opf/";
-const NS_DC = "http://purl.org/dc/elements/1.1/";
 const NS_OASIS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container";
 const NS_OASIS_MANIFEST = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
 /**
- * HWPX(OWPML) 패키지 빌더.
+ * HWPX(OWPML) 패키지 빌더 (평문 → HWPX).
  *
- * OWPML 1.x 패키지 규칙(ODF/EPUB 계열):
- *   - mimetype 엔트리는 ZIP 내 첫 번째이며 STORE(무압축)로 저장.
- *   - 내용은 정확히 "application/owpml" (BOM/개행 없음).
+ * OWPML 패키지 규칙(한컴 호환):
+ *   - mimetype 엔트리는 ZIP 내 첫 번째이며 STORE(무압축), 내용은 "application/hwp+zip".
+ *   - 요소만 네임스페이스 prefix(hp:/hh:), 속성은 prefix 없음.
+ *   - head/sec/package 루트에 풀 네임스페이스 선언, 첫 문단에 <hp:secPr>.
  *   - META-INF/container.xml 가 rootfile 위치를 가리킴.
- *   - META-INF/manifest.xml 가 패키지 매니페스트(media-type 포함).
+ *   - 공통 컨벤션 상수는 ./hwp/owpml.ts 와 공유.
+ * [shyang 2026-06-21]
  */
 export class HwpxWriter {
   async createFromPlainText(text: string, options?: HwpxWriteOptions): Promise<Uint8Array> {
     const zip = new JSZip();
 
     // mimetype: 반드시 첫 엔트리, STORED.
-    zip.file("mimetype", "application/owpml", { compression: "STORE" });
+    zip.file("mimetype", MIMETYPE, { compression: "STORE" });
 
     // META-INF/container.xml — rootfile 위치
     const containerXml =
@@ -67,10 +72,10 @@ export class HwpxWriter {
       `</ha:HWPApplicationSetting>`;
     zip.file("settings.xml", settings);
 
-    // Contents/content.hpf (OPF-like)
+    // Contents/content.hpf (OPF-like) — spine 에 header 포함
     const contentHpf =
-      `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<opf:package xmlns:opf="${NS_OPF}" xmlns:dc="${NS_DC}" version="1.0">` +
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+      `<opf:package ${OWPML_NS} version="" unique-identifier="" id="">` +
       `<opf:metadata>` +
       `<dc:title>${escapeXml(options?.title ?? "")}</dc:title>` +
       `<dc:creator>${escapeXml(options?.creator ?? "")}</dc:creator>` +
@@ -79,81 +84,103 @@ export class HwpxWriter {
       `<opf:manifest>` +
       `<opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>` +
       `<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>` +
+      `<opf:item id="settings" href="settings.xml" media-type="application/xml"/>` +
       `</opf:manifest>` +
       `<opf:spine>` +
-      `<opf:itemref idref="section0"/>` +
+      `<opf:itemref idref="header" linear="yes"/>` +
+      `<opf:itemref idref="section0" linear="yes"/>` +
       `</opf:spine>` +
       `</opf:package>`;
     zip.file("Contents/content.hpf", contentHpf);
 
-    // Contents/header.xml — 최소 charPr 1개, paraPr 1개 정의
+    // Contents/header.xml — 최소 fontface/borderFill/charPr/tabProperties/numbering/paraPr/style
     const header =
-      `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<hh:head xmlns:hh="${NS_HH}" xmlns:hc="${NS_HC}">` +
-      `<hh:beginNum hh:page="1" hh:footnote="1" hh:endnote="1" hh:pic="1" hh:tbl="1" hh:equation="1"/>` +
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+      `<hh:head ${OWPML_NS} version="1.5" secCnt="1">` +
+      `<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>` +
       `<hh:refList>` +
-      `<hh:fontfaces hh:itemCnt="1">` +
-      `<hh:fontface hh:lang="HANGUL" hh:fontCnt="1">` +
-      `<hh:font hh:id="0" hh:type="TTF" hh:name="바탕"/>` +
+      `<hh:fontfaces itemCnt="1">` +
+      `<hh:fontface lang="HANGUL" fontCnt="1">` +
+      `<hh:font id="0" face="함초롬바탕" type="TTF" isEmbedded="0"/>` +
       `</hh:fontface>` +
       `</hh:fontfaces>` +
-      `<hh:charProperties hh:itemCnt="1">` +
-      `<hh:charPr hh:id="0" hh:height="1000" hh:textColor="#000000" hh:shadeColor="none" hh:useFontSpace="0" hh:useKerning="0" hh:symMark="NONE" hh:borderFillIDRef="0">` +
-      `<hh:fontRef hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>` +
-      `<hh:ratio hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>` +
-      `<hh:spacing hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>` +
-      `<hh:relSz hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>` +
-      `<hh:offset hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>` +
+      `<hh:borderFills itemCnt="1">` +
+      `<hh:borderFill id="0" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">` +
+      `<hh:slash type="NONE" Crooked="0" isCounter="0"/>` +
+      `<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>` +
+      `<hh:leftBorder type="SOLID" width="0.1 mm" color="#000000"/>` +
+      `<hh:rightBorder type="SOLID" width="0.1 mm" color="#000000"/>` +
+      `<hh:topBorder type="SOLID" width="0.1 mm" color="#000000"/>` +
+      `<hh:bottomBorder type="SOLID" width="0.1 mm" color="#000000"/>` +
+      `<hh:diagonal type="NONE" width="0.1 mm" color="#000000"/>` +
+      `</hh:borderFill>` +
+      `</hh:borderFills>` +
+      `<hh:charProperties itemCnt="1">` +
+      `<hh:charPr id="0" height="1000" textColor="#000000" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="0">` +
+      `<hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+      `<hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+      `<hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+      `<hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+      `<hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
       `</hh:charPr>` +
       `</hh:charProperties>` +
-      `<hh:paraProperties hh:itemCnt="1">` +
-      `<hh:paraPr hh:id="0" hh:tabPrIDRef="0" hh:condense="0" hh:fontLineHeight="0" hh:snapToGrid="0" hh:suppressLineNumbers="0" hh:checked="0">` +
-      `<hh:align hh:horizontal="JUSTIFY" hh:vertical="BASELINE"/>` +
-      `<hh:heading hh:type="NONE" hh:idRef="0" hh:level="0"/>` +
-      `<hh:breakSetting hh:breakLatinWord="KEEP_WORD" hh:breakNonLatinWord="KEEP_WORD" hh:widowOrphan="0" hh:keepWithNext="0" hh:keepLines="0" hh:pageBreakBefore="0" hh:lineWrap="BREAK"/>` +
-      `<hh:margin><hh:intent hh:value="0"/><hh:left hh:value="0"/><hh:right hh:value="0"/><hh:prev hh:value="0"/><hh:next hh:value="0"/></hh:margin>` +
-      `<hh:lineSpacing hh:type="PERCENT" hh:value="160"/>` +
+      `<hh:tabProperties itemCnt="1">` +
+      `<hh:tabPr id="0" autoTabLeft="1" autoTabRight="1"><hh:items itemCnt="0"/></hh:tabPr>` +
+      `</hh:tabProperties>` +
+      `<hh:numberings itemCnt="1">` +
+      `<hh:numbering id="0" start="1">` +
+      `<hh:paraHead level="1" start="1" numFormat="^1." textOffsetType="PERCENT" textOffset="50" numberingChar="false" charPrIDRef="0">` +
+      `<hh:autoNumberFormat type="DIGIT" userChar="" prefixChar="" suffixChar="."/>` +
+      `</hh:paraHead>` +
+      `</hh:numbering>` +
+      `</hh:numberings>` +
+      `<hh:paraProperties itemCnt="1">` +
+      `<hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="0" suppressLineNumbers="0" checked="0">` +
+      `<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>` +
+      `<hh:heading type="NONE" idRef="0" level="0"/>` +
+      `<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>` +
+      `<hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="0"/><hh:next value="0"/></hh:margin>` +
+      `<hh:lineSpacing type="PERCENT" value="160"/>` +
       `</hh:paraPr>` +
       `</hh:paraProperties>` +
-      `<hh:styles hh:itemCnt="1">` +
-      `<hh:style hh:id="0" hh:type="PARA" hh:name="바탕글" hh:engName="Normal" hh:paraPrIDRef="0" hh:charPrIDRef="0" hh:nextStyleIDRef="0" hh:langID="1042" hh:lockForm="0"/>` +
+      `<hh:styles itemCnt="1">` +
+      `<hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/>` +
       `</hh:styles>` +
       `</hh:refList>` +
       `</hh:head>`;
     zip.file("Contents/header.xml", header);
 
-    // Contents/section0.xml
-    const paragraphs = text
+    // Contents/section0.xml — 첫 문단에 secPr, 이후 평문 줄 단위 문단
+    const bodyParas = text
       .split(/\r?\n/)
       .map(
         (line) =>
-          `<hp:p hp:paraPrIDRef="0" hp:styleIDRef="0" hp:pageBreak="0" hp:columnBreak="0" hp:merged="0">` +
-          `<hp:run hp:charPrIDRef="0">` +
+          `<hp:p id="${makeParaId()}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+          `<hp:run charPrIDRef="0">` +
           `<hp:t>${escapeXml(line)}</hp:t>` +
           `</hp:run>` +
-          `<hp:linesegarray><hp:lineseg hp:textpos="0" hp:vertpos="0" hp:vertsize="1000" hp:textheight="1000" hp:baseline="850" hp:spacing="600" hp:horzpos="0" hp:horzsize="42520" hp:flags="393216"/></hp:linesegarray>` +
+          DEFAULT_LINESEG +
           `</hp:p>`
       )
       .join("");
 
+    const secPrPara =
+      `<hp:p id="${makeParaId()}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+      `<hp:run charPrIDRef="0">${SEC_PR_XML}</hp:run>` +
+      `<hp:run charPrIDRef="0"><hp:t/></hp:run>` +
+      DEFAULT_LINESEG +
+      `</hp:p>`;
+
     const section0 =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-      `<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="${NS_HP}" xmlns:hh="${NS_HH}" xmlns:hc="${NS_HC}">` +
-      paragraphs +
+      `<hs:sec ${OWPML_NS}>` +
+      secPrPara +
+      bodyParas +
       `</hs:sec>`;
     zip.file("Contents/section0.xml", section0);
 
     return await zip.generateAsync({ type: "uint8array" });
   }
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
 }
 
 export default HwpxWriter;
