@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve as resolvePath, dirname, isAbsolute } from "node:path";
 import HwpxReader from "./lib/hwpxReader.js";
 import HwpxWriter from "./lib/writer.js";
 import {
@@ -10,7 +13,32 @@ import {
   hwpToMarkdown,
   markdownToHwpx,
   htmlToHwpx,
+  type ImageResolver,
 } from "./lib/hwp/index.js";
+
+/**
+ * CLI(Node) 전용 fs 기반 이미지 resolver.
+ * md/html 안의 file://·절대/상대 경로 이미지를 읽어 BinData 로 임베드한다.
+ * (data URI 와 원격 URL 은 null → 코어가 처리하거나 스킵)
+ */
+function fsImageResolver(baseDir: string): ImageResolver {
+  return (src) => {
+    try {
+      if (/^data:/i.test(src) || /^https?:\/\//i.test(src)) return null;
+      const p = /^file:\/\//i.test(src)
+        ? fileURLToPath(src)
+        : isAbsolute(src)
+          ? src
+          : resolvePath(baseDir, src);
+      const data = new Uint8Array(readFileSync(p));
+      if (data.length === 0) return null;
+      const ext = (p.split(".").pop() || "png").toLowerCase();
+      return { data, extension: ext };
+    } catch {
+      return null;
+    }
+  };
+}
 
 async function main() {
   const [command, inputPath, maybeOut] = process.argv.slice(2);
@@ -57,7 +85,9 @@ async function main() {
       process.exit(1);
     }
     const md = await readFile(inputPath, "utf-8");
-    const bytes = await markdownToHwpx(md);
+    const bytes = await markdownToHwpx(md, {
+      imageResolver: fsImageResolver(dirname(resolvePath(inputPath))),
+    });
     const { writeFile: wf } = await import("node:fs/promises");
     await wf(outPath, bytes);
     console.log(`Wrote ${outPath}`);
@@ -71,7 +101,9 @@ async function main() {
       process.exit(1);
     }
     const html = await readFile(inputPath, "utf-8");
-    const bytes = await htmlToHwpx(html);
+    const bytes = await htmlToHwpx(html, {
+      imageResolver: fsImageResolver(dirname(resolvePath(inputPath))),
+    });
     const { writeFile: wf } = await import("node:fs/promises");
     await wf(outPath, bytes);
     console.log(`Wrote ${outPath}`);

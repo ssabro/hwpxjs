@@ -124,8 +124,14 @@ export class HwpxReader implements HwpxReaderInterface {
 
   private isLikelyHwpxMime(m: string): boolean {
     const s = m.toLowerCase();
-    // 허용: application/owpml, application/owpml+xml, application/vnd.hancom.hwpx(추정), hwpx/owpml 포함 케이스
-    return s === "application/owpml" || s.includes("owpml") || s.includes("hwpx");
+    // 허용: application/hwp+zip(한컴 표준), application/owpml, hwpx/owpml/hwp+zip 포함 케이스
+    return (
+      s === "application/hwp+zip" ||
+      s === "application/owpml" ||
+      s.includes("hwp+zip") ||
+      s.includes("owpml") ||
+      s.includes("hwpx")
+    );
   }
 
   private getTextFile(path: string): string | null {
@@ -718,8 +724,11 @@ export class HwpxReader implements HwpxReaderInterface {
         // 셀 안 paragraph: <hp:tc><hp:subList><hp:p>...</hp:p></hp:subList></hp:tc>
         // 또는 직접 <hp:tc><hp:p>... 둘 다 지원
         const inner = this.renderCellContentHtml(tc, { enableImages, enableStyles }, options);
-        const colSpan = tc?.["@colSpan"] ?? tc?.["@colspan"] ?? tc?.["@gridSpan"];
-        const rowSpan = tc?.["@rowSpan"] ?? tc?.["@rowspan"];
+        // 구형(속성 @colSpan) + 신형(자식 <hp:cellSpan colSpan rowSpan>) 둘 다 지원
+        const cellSpan = tc?.cellSpan ?? tc?.["hp:cellSpan"];
+        const colSpan =
+          tc?.["@colSpan"] ?? tc?.["@colspan"] ?? tc?.["@gridSpan"] ?? cellSpan?.["@colSpan"];
+        const rowSpan = tc?.["@rowSpan"] ?? tc?.["@rowspan"] ?? cellSpan?.["@rowSpan"];
         const alignStyle = this.getAlignStyle(tc);
         const attrs: string[] = [];
         if (colSpan && String(colSpan) !== "1") attrs.push(` colspan="${String(colSpan)}"`);

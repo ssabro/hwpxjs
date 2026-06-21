@@ -38,9 +38,9 @@ import {
   htmlToHwpDocument,
   type MarkdownWriteOptions,
 } from "./converter.js";
-import type { HwpDocument, HwpSection } from "./types.js";
+import type { HwpDocument, HwpSection, ImageResolver } from "./types.js";
 
-export type { HwpDocument, HwpSection } from "./types.js";
+export type { HwpDocument, HwpSection, ImageResolver, ConvertOptions } from "./types.js";
 export type { MarkdownWriteOptions } from "./converter.js";
 export {
   hwpDocumentToMarkdown,
@@ -189,17 +189,17 @@ export async function hwpToMarkdown(
 /** Markdown 텍스트를 HWPX 패키지로 변환. */
 export async function markdownToHwpx(
   md: string,
-  options?: { title?: string; creator?: string }
+  options?: { title?: string; creator?: string; imageResolver?: ImageResolver }
 ): Promise<Uint8Array> {
-  const doc = markdownToHwpDocument(md);
+  const doc = markdownToHwpDocument(md, { imageResolver: options?.imageResolver });
   return await hwpDocumentToHwpx(doc, options);
 }
 
 /** HTML 문서를 HWPX 패키지로 변환. */
 export async function htmlToHwpx(
   html: string,
-  options?: { title?: string; creator?: string }
+  options?: { title?: string; creator?: string; imageResolver?: ImageResolver }
 ): Promise<Uint8Array> {
-  const doc = htmlToHwpDocument(html);
+  const doc = htmlToHwpDocument(html, { imageResolver: options?.imageResolver });
   return await hwpDocumentToHwpx(doc, options);
 }

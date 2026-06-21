@@ -30,23 +30,21 @@ import type {
   HwpTableCell,
 } from "./types.js";
 import { detectImageMime } from "./binData.js";
+import {
+  MIMETYPE,
+  OWPML_NS,
+  DEFAULT_LINESEG,
+  SEC_PR_XML,
+  makeParaId,
+  escapeXml,
+} from "./owpml.js";
 
-const NS_HP = "http://www.hancom.co.kr/hwpml/2011/paragraph";
-const NS_HH = "http://www.hancom.co.kr/hwpml/2011/head";
-const NS_HC = "http://www.hancom.co.kr/hwpml/2011/core";
-const NS_HA = "http://www.hancom.co.kr/hwpml/2011/app";
-const NS_HS = "http://www.hancom.co.kr/hwpml/2011/section";
 const NS_OPF = "http://www.idpf.org/2007/opf/";
 const NS_DC = "http://purl.org/dc/elements/1.1/";
 const NS_OASIS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container";
 const NS_OASIS_MANIFEST = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 
 const LANG_NAMES = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"] as const;
-
-const DEFAULT_LINESEG =
-  `<hp:linesegarray>` +
-  `<hp:lineseg hp:textpos="0" hp:vertpos="0" hp:vertsize="1000" hp:textheight="1000" hp:baseline="850" hp:spacing="600" hp:horzpos="0" hp:horzsize="42520" hp:flags="393216"/>` +
-  `</hp:linesegarray>`;
 
 export interface BuildOptions {
   title?: string;
@@ -65,7 +63,7 @@ export async function buildHwpxFromDocument(
   options?: BuildOptions
 ): Promise<Uint8Array> {
   const zip = new JSZip();
-  zip.file("mimetype", "application/owpml", { compression: "STORE" });
+  zip.file("mimetype", MIMETYPE, { compression: "STORE" });
 
   // BinData 매니페스트 항목 사전 구성
   const binEntries: BinEntry[] = [];
@@ -120,14 +118,14 @@ export async function buildHwpxFromDocument(
   zip.file(
     "version.xml",
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<ha:HCFVersion xmlns:ha="${NS_HA}" ha:targetApplication="WORDPROCESSOR" ha:major="${doc.header.version.major}" ha:minor="${doc.header.version.minor}" ha:micro="${doc.header.version.build}" ha:buildNumber="${doc.header.version.revision}"/>`
+      `<ha:HCFVersion xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" ha:targetApplication="WORDPROCESSOR" ha:major="${doc.header.version.major}" ha:minor="${doc.header.version.minor}" ha:micro="${doc.header.version.build}" ha:buildNumber="${doc.header.version.revision}"/>`
   );
 
   // settings.xml
   zip.file(
     "settings.xml",
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<ha:HWPApplicationSetting xmlns:ha="${NS_HA}">` +
+      `<ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app">` +
       `<ha:CaretPosition ha:listIDRef="0" ha:paraIDRef="0" ha:pos="0"/>` +
       `</ha:HWPApplicationSetting>`
   );
@@ -142,13 +140,17 @@ export async function buildHwpxFromDocument(
     );
   }
   for (const e of binEntries) {
-    opfManifest.push(`<opf:item id="${e.id}" href="${e.href}" media-type="${e.mediaType}"/>`);
+    opfManifest.push(
+      `<opf:item id="${e.id}" href="${e.href}" media-type="${e.mediaType}" isEmbeded="1"/>`
+    );
   }
-  const spineRefs = doc.sections.map((_, i) => `<opf:itemref idref="section${i}"/>`).join("");
+  const spineRefs =
+    `<opf:itemref idref="header" linear="yes"/>` +
+    doc.sections.map((_, i) => `<opf:itemref idref="section${i}" linear="yes"/>`).join("");
   zip.file(
     "Contents/content.hpf",
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<opf:package xmlns:opf="${NS_OPF}" xmlns:dc="${NS_DC}" version="1.0">` +
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+      `<opf:package ${OWPML_NS} version="" unique-identifier="" id="">` +
       `<opf:metadata>` +
       `<dc:title>${escapeXml(options?.title ?? "")}</dc:title>` +
       `<dc:creator>${escapeXml(options?.creator ?? "")}</dc:creator>` +
@@ -164,7 +166,7 @@ export async function buildHwpxFromDocument(
   );
 
   // header.xml — DocInfo 기반 풀 빌드
-  zip.file("Contents/header.xml", buildHeaderXmlFromDocInfo(doc.docInfo));
+  zip.file("Contents/header.xml", buildHeaderXmlFromDocInfo(doc.docInfo, doc.sections.length));
 
   // 섹션
   for (let i = 0; i < doc.sections.length; i++) {
@@ -240,7 +242,7 @@ function collectPrvLines(para: HwpParagraph, lines: string[]): void {
 // header.xml 빌드 (DocInfo → refList)
 // ============================================================
 
-function buildHeaderXmlFromDocInfo(docInfo: HwpDocInfo): string {
+function buildHeaderXmlFromDocInfo(docInfo: HwpDocInfo, secCnt: number): string {
   const fontfacesXml = buildFontfacesXml(docInfo.fontFaces);
   const borderFillsXml = buildBorderFillsXml(docInfo.borderFills);
   const charPropsXml = buildCharPropertiesXml(docInfo.charShapes);
@@ -251,9 +253,9 @@ function buildHeaderXmlFromDocInfo(docInfo: HwpDocInfo): string {
   const stylesXml = buildStylesXml(docInfo.styles);
 
   return (
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<hh:head xmlns:hh="${NS_HH}" xmlns:hc="${NS_HC}">` +
-    `<hh:beginNum hh:page="1" hh:footnote="1" hh:endnote="1" hh:pic="1" hh:tbl="1" hh:equation="1"/>` +
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<hh:head ${OWPML_NS} version="1.5" secCnt="${Math.max(1, secCnt)}">` +
+    `<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>` +
     `<hh:refList>` +
     fontfacesXml +
     borderFillsXml +
@@ -274,7 +276,7 @@ function buildBorderFillsXml(borderFills: HwpBorderFill[]): string {
   for (let i = 0; i < cnt; i++) {
     items.push(buildSingleBorderFillXml(i, borderFills[i]));
   }
-  return `<hh:borderFills hh:itemCnt="${cnt}">${items.join("")}</hh:borderFills>`;
+  return `<hh:borderFills itemCnt="${cnt}">${items.join("")}</hh:borderFills>`;
 }
 
 /** HWP 너비 인덱스 → mm 매핑 (HWP 5.0 스펙) */
@@ -299,9 +301,9 @@ function widthMm(idx: number): string {
 
 function buildBorderXml(tagName: string, line: HwpBorderLine | undefined): string {
   if (!line) {
-    return `<hh:${tagName} hh:type="SOLID" hh:width="0.1 mm" hh:color="#000000"/>`;
+    return `<hh:${tagName} type="SOLID" width="0.1 mm" color="#000000"/>`;
   }
-  return `<hh:${tagName} hh:type="${lineTypeName(line.lineType)}" hh:width="${widthMm(line.widthIndex)}" hh:color="${colorBgrToHex(line.color)}"/>`;
+  return `<hh:${tagName} type="${lineTypeName(line.lineType)}" width="${widthMm(line.widthIndex)}" color="${colorBgrToHex(line.color)}"/>`;
 }
 
 function buildSingleBorderFillXml(id: number, bf?: HwpBorderFill): string {
@@ -324,18 +326,18 @@ function buildSingleBorderFillXml(id: number, bf?: HwpBorderFill): string {
 
   // <hh:diagonal> 의 type 은 둘 중 하나라도 있으면 SOLID
   const hasDiag = slashKind !== 0 || backSlashKind !== 0;
-  const diagonalEl = `<hh:diagonal hh:type="${hasDiag ? "SOLID" : "NONE"}" hh:width="${diagWidth}" hh:color="${diagColor}"/>`;
+  const diagonalEl = `<hh:diagonal type="${hasDiag ? "SOLID" : "NONE"}" width="${diagWidth}" color="${diagColor}"/>`;
 
   const fillEl = bf?.fill
     ? `<hh:fillBrush>` +
-      `<hh:winBrush hh:faceColor="${colorBgrToHex(bf.fill.backgroundColor)}" hh:hatchColor="${colorBgrToHex(bf.fill.patternColor)}" hh:hatchStyle="${bf.fill.patternType < 0 ? "NONE" : "HORIZONTAL"}" hh:alpha="0"/>` +
+      `<hh:winBrush faceColor="${colorBgrToHex(bf.fill.backgroundColor)}" hatchColor="${colorBgrToHex(bf.fill.patternColor)}" hatchStyle="${bf.fill.patternType < 0 ? "NONE" : "HORIZONTAL"}" alpha="0"/>` +
       `</hh:fillBrush>`
     : "";
 
   return (
-    `<hh:borderFill hh:id="${id}" hh:threeD="${(attr & 0x01) !== 0 ? 1 : 0}" hh:shadow="${(attr & 0x02) !== 0 ? 1 : 0}" hh:centerLine="NONE" hh:breakCellSeparateLine="0">` +
-    `<hh:slash hh:type="${slashType}" hh:Crooked="0" hh:isCounter="0"/>` +
-    `<hh:backSlash hh:type="${backSlashType}" hh:Crooked="0" hh:isCounter="0"/>` +
+    `<hh:borderFill id="${id}" threeD="${(attr & 0x01) !== 0 ? 1 : 0}" shadow="${(attr & 0x02) !== 0 ? 1 : 0}" centerLine="NONE" breakCellSeparateLine="0">` +
+    `<hh:slash type="${slashType}" Crooked="0" isCounter="0"/>` +
+    `<hh:backSlash type="${backSlashType}" Crooked="0" isCounter="0"/>` +
     left +
     right +
     top +
@@ -354,24 +356,24 @@ function buildTabDefsXml(tabDefs: HwpTabDef[]): string {
     const al = td?.autoTabLeft ?? true ? 1 : 0;
     const ar = td?.autoTabRight ?? true ? 1 : 0;
     items.push(
-      `<hh:tabPr hh:id="${i}" hh:autoTabLeft="${al}" hh:autoTabRight="${ar}">` +
-        `<hh:items hh:itemCnt="0"/>` +
+      `<hh:tabPr id="${i}" autoTabLeft="${al}" autoTabRight="${ar}">` +
+        `<hh:items itemCnt="0"/>` +
         `</hh:tabPr>`
     );
   }
-  return `<hh:tabPrs hh:itemCnt="${cnt}">${items.join("")}</hh:tabPrs>`;
+  return `<hh:tabProperties itemCnt="${cnt}">${items.join("")}</hh:tabProperties>`;
 }
 
 function buildNumberingsXml(numberings: HwpNumbering[]): string {
   if (numberings.length === 0) {
     return (
-      `<hh:numberings hh:itemCnt="1">` +
-      `<hh:numbering hh:id="0" hh:start="1">` +
+      `<hh:numberings itemCnt="1">` +
+      `<hh:numbering id="0" start="1">` +
       Array.from({ length: 7 })
         .map(
           (_, level) =>
-            `<hh:paraHead hh:level="${level + 1}" hh:start="1" hh:numFormat="^${level + 1}." hh:textOffsetType="PERCENT" hh:textOffset="50" hh:numberingChar="false" hh:charPrIDRef="0">` +
-            `<hh:autoNumberFormat hh:type="DIGIT" hh:userChar="" hh:prefixChar="" hh:suffixChar="."/>` +
+            `<hh:paraHead level="${level + 1}" start="1" numFormat="^${level + 1}." textOffsetType="PERCENT" textOffset="50" numberingChar="false" charPrIDRef="0">` +
+            `<hh:autoNumberFormat type="DIGIT" userChar="" prefixChar="" suffixChar="."/>` +
             `</hh:paraHead>`
         )
         .join("") +
@@ -382,27 +384,27 @@ function buildNumberingsXml(numberings: HwpNumbering[]): string {
   const items = numberings
     .map(
       (n, idx) =>
-        `<hh:numbering hh:id="${idx}" hh:start="${n.startNumber}">` +
+        `<hh:numbering id="${idx}" start="${n.startNumber}">` +
         n.levelFormats
           .map(
             (fmt, level) =>
-              `<hh:paraHead hh:level="${level + 1}" hh:start="1" hh:numFormat="${escapeXml(fmt || "^" + (level + 1) + ".")}" hh:textOffsetType="PERCENT" hh:textOffset="50" hh:numberingChar="false" hh:charPrIDRef="0">` +
-              `<hh:autoNumberFormat hh:type="DIGIT" hh:userChar="" hh:prefixChar="" hh:suffixChar="."/>` +
+              `<hh:paraHead level="${level + 1}" start="1" numFormat="${escapeXml(fmt || "^" + (level + 1) + ".")}" textOffsetType="PERCENT" textOffset="50" numberingChar="false" charPrIDRef="0">` +
+              `<hh:autoNumberFormat type="DIGIT" userChar="" prefixChar="" suffixChar="."/>` +
               `</hh:paraHead>`
           )
           .join("") +
         `</hh:numbering>`
     )
     .join("");
-  return `<hh:numberings hh:itemCnt="${numberings.length}">${items}</hh:numberings>`;
+  return `<hh:numberings itemCnt="${numberings.length}">${items}</hh:numberings>`;
 }
 
 function buildBulletsXml(bullets: HwpBullet[]): string {
   if (bullets.length === 0) {
     return (
-      `<hh:bullets hh:itemCnt="1">` +
-      `<hh:bullet hh:id="0" hh:char="●" hh:imageBullet="0" hh:checkedChar="0">` +
-      `<hh:img hh:bright="0" hh:contrast="0" hh:effect="REAL_PIC" hh:binaryItemIDRef="0"/>` +
+      `<hh:bullets itemCnt="1">` +
+      `<hh:bullet id="0" char="●" imageBullet="0" checkedChar="0">` +
+      `<hh:img bright="0" contrast="0" effect="REAL_PIC" binaryItemIDRef="0"/>` +
       `</hh:bullet>` +
       `</hh:bullets>`
     );
@@ -410,12 +412,12 @@ function buildBulletsXml(bullets: HwpBullet[]): string {
   const items = bullets
     .map(
       (b, idx) =>
-        `<hh:bullet hh:id="${idx}" hh:char="${escapeXml(b.bulletChar)}" hh:imageBullet="0" hh:checkedChar="0">` +
-        `<hh:img hh:bright="0" hh:contrast="0" hh:effect="REAL_PIC" hh:binaryItemIDRef="0"/>` +
+        `<hh:bullet id="${idx}" char="${escapeXml(b.bulletChar)}" imageBullet="0" checkedChar="0">` +
+        `<hh:img bright="0" contrast="0" effect="REAL_PIC" binaryItemIDRef="0"/>` +
         `</hh:bullet>`
     )
     .join("");
-  return `<hh:bullets hh:itemCnt="${bullets.length}">${items}</hh:bullets>`;
+  return `<hh:bullets itemCnt="${bullets.length}">${items}</hh:bullets>`;
 }
 
 function buildFontfacesXml(fontFaces: HwpFaceName[][]): string {
@@ -427,58 +429,58 @@ function buildFontfacesXml(fontFaces: HwpFaceName[][]): string {
     const lang = LANG_NAMES[li];
     const list = fonts.length > 0
       ? fonts.map((f, idx) => buildFontXml(idx, f)).join("")
-      : `<hh:font hh:id="0" hh:type="TTF" hh:name="바탕"/>`;
+      : `<hh:font id="0" face="바탕" type="TTF" isEmbedded="0"/>`;
     const cnt = fonts.length > 0 ? fonts.length : 1;
     groups.push(
-      `<hh:fontface hh:lang="${lang}" hh:fontCnt="${cnt}">${list}</hh:fontface>`
+      `<hh:fontface lang="${lang}" fontCnt="${cnt}">${list}</hh:fontface>`
     );
   }
-  return `<hh:fontfaces hh:itemCnt="${groups.length}">${groups.join("")}</hh:fontfaces>`;
+  return `<hh:fontfaces itemCnt="${groups.length}">${groups.join("")}</hh:fontfaces>`;
 }
 
 function buildFontXml(id: number, f: HwpFaceName): string {
-  const subAttrs = f.substituteName ? ` hh:type="UNKNOWN" hh:name="${escapeXml(f.substituteName)}"` : "";
+  const subAttrs = f.substituteName ? ` type="UNKNOWN" face="${escapeXml(f.substituteName)}"` : "";
   const sub = f.substituteName ? `<hh:substFont${subAttrs}/>` : "";
-  return `<hh:font hh:id="${id}" hh:type="TTF" hh:name="${escapeXml(f.name)}">${sub}</hh:font>`;
+  return `<hh:font id="${id}" face="${escapeXml(f.name)}" type="TTF" isEmbedded="0">${sub}</hh:font>`;
 }
 
 function buildCharPropertiesXml(charShapes: HwpCharShape[]): string {
   if (charShapes.length === 0) {
     // 최소 1개 fallback
     return (
-      `<hh:charProperties hh:itemCnt="1">` +
-      `<hh:charPr hh:id="0" hh:height="1000" hh:textColor="#000000" hh:shadeColor="none" hh:useFontSpace="0" hh:useKerning="0" hh:symMark="NONE" hh:borderFillIDRef="0">` +
+      `<hh:charProperties itemCnt="1">` +
+      `<hh:charPr id="0" height="1000" textColor="#000000" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="0">` +
       defaultFontGroupXml() +
       `</hh:charPr>` +
       `</hh:charProperties>`
     );
   }
   const items = charShapes.map((cs, idx) => buildCharPrXml(idx, cs)).join("");
-  return `<hh:charProperties hh:itemCnt="${charShapes.length}">${items}</hh:charProperties>`;
+  return `<hh:charProperties itemCnt="${charShapes.length}">${items}</hh:charProperties>`;
 }
 
 function buildCharPrXml(id: number, cs: HwpCharShape): string {
   const ids = cs.faceNameIds;
   const fontRef =
-    `<hh:fontRef hh:hangul="${ids.hangul}" hh:latin="${ids.latin}" hh:hanja="${ids.hanja}" hh:japanese="${ids.japanese}" hh:other="${ids.other}" hh:symbol="${ids.symbol}" hh:user="${ids.user}"/>`;
-  const ratio = `<hh:ratio hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>`;
-  const spacing = `<hh:spacing hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>`;
-  const relSz = `<hh:relSz hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>`;
-  const offset = `<hh:offset hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>`;
+    `<hh:fontRef hangul="${ids.hangul}" latin="${ids.latin}" hanja="${ids.hanja}" japanese="${ids.japanese}" other="${ids.other}" symbol="${ids.symbol}" user="${ids.user}"/>`;
+  const ratio = `<hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>`;
+  const spacing = `<hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>`;
+  const relSz = `<hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>`;
+  const offset = `<hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>`;
   const italic = cs.italic ? `<hh:italic/>` : "";
   const bold = cs.bold ? `<hh:bold/>` : "";
   const underline = cs.underline
-    ? `<hh:underline hh:type="BOTTOM" hh:shape="SOLID" hh:color="${colorBgrToHex(cs.underlineColor)}"/>`
+    ? `<hh:underline type="BOTTOM" shape="SOLID" color="${colorBgrToHex(cs.underlineColor)}"/>`
     : "";
   const strikeout = cs.strikeout
-    ? `<hh:strikeout hh:shape="SOLID" hh:color="${colorBgrToHex(cs.textColor)}"/>`
+    ? `<hh:strikeout shape="SOLID" color="${colorBgrToHex(cs.textColor)}"/>`
     : "";
 
   const textColor = colorBgrToHex(cs.textColor);
   const shadeColor = cs.shadeColor === 0xffffff || cs.shadeColor === 0 ? "none" : colorBgrToHex(cs.shadeColor);
 
   return (
-    `<hh:charPr hh:id="${id}" hh:height="${cs.baseSize}" hh:textColor="${textColor}" hh:shadeColor="${shadeColor}" hh:useFontSpace="0" hh:useKerning="0" hh:symMark="NONE" hh:borderFillIDRef="0">` +
+    `<hh:charPr id="${id}" height="${cs.baseSize}" textColor="${textColor}" shadeColor="${shadeColor}" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="0">` +
     fontRef +
     ratio +
     spacing +
@@ -494,47 +496,47 @@ function buildCharPrXml(id: number, cs: HwpCharShape): string {
 
 function defaultFontGroupXml(): string {
   return (
-    `<hh:fontRef hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>` +
-    `<hh:ratio hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>` +
-    `<hh:spacing hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>` +
-    `<hh:relSz hh:hangul="100" hh:latin="100" hh:hanja="100" hh:japanese="100" hh:other="100" hh:symbol="100" hh:user="100"/>` +
-    `<hh:offset hh:hangul="0" hh:latin="0" hh:hanja="0" hh:japanese="0" hh:other="0" hh:symbol="0" hh:user="0"/>`
+    `<hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+    `<hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+    `<hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+    `<hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+    `<hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>`
   );
 }
 
 function buildParaPropertiesXml(paraShapes: HwpParaShape[]): string {
   if (paraShapes.length === 0) {
     return (
-      `<hh:paraProperties hh:itemCnt="1">` +
-      `<hh:paraPr hh:id="0" hh:tabPrIDRef="0" hh:condense="0" hh:fontLineHeight="0" hh:snapToGrid="0" hh:suppressLineNumbers="0" hh:checked="0">` +
-      `<hh:align hh:horizontal="JUSTIFY" hh:vertical="BASELINE"/>` +
-      `<hh:heading hh:type="NONE" hh:idRef="0" hh:level="0"/>` +
-      `<hh:breakSetting hh:breakLatinWord="KEEP_WORD" hh:breakNonLatinWord="KEEP_WORD" hh:widowOrphan="0" hh:keepWithNext="0" hh:keepLines="0" hh:pageBreakBefore="0" hh:lineWrap="BREAK"/>` +
-      `<hh:margin><hh:intent hh:value="0"/><hh:left hh:value="0"/><hh:right hh:value="0"/><hh:prev hh:value="0"/><hh:next hh:value="0"/></hh:margin>` +
-      `<hh:lineSpacing hh:type="PERCENT" hh:value="160"/>` +
+      `<hh:paraProperties itemCnt="1">` +
+      `<hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="0" suppressLineNumbers="0" checked="0">` +
+      `<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>` +
+      `<hh:heading type="NONE" idRef="0" level="0"/>` +
+      `<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>` +
+      `<hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="0"/><hh:next value="0"/></hh:margin>` +
+      `<hh:lineSpacing type="PERCENT" value="160"/>` +
       `</hh:paraPr>` +
       `</hh:paraProperties>`
     );
   }
   const items = paraShapes.map((ps, idx) => buildParaPrXml(idx, ps)).join("");
-  return `<hh:paraProperties hh:itemCnt="${paraShapes.length}">${items}</hh:paraProperties>`;
+  return `<hh:paraProperties itemCnt="${paraShapes.length}">${items}</hh:paraProperties>`;
 }
 
 function buildParaPrXml(id: number, ps: HwpParaShape): string {
   const align = alignToOwpml(ps.alignment);
   return (
-    `<hh:paraPr hh:id="${id}" hh:tabPrIDRef="0" hh:condense="0" hh:fontLineHeight="0" hh:snapToGrid="0" hh:suppressLineNumbers="0" hh:checked="0">` +
-    `<hh:align hh:horizontal="${align}" hh:vertical="BASELINE"/>` +
-    `<hh:heading hh:type="NONE" hh:idRef="0" hh:level="0"/>` +
-    `<hh:breakSetting hh:breakLatinWord="KEEP_WORD" hh:breakNonLatinWord="KEEP_WORD" hh:widowOrphan="0" hh:keepWithNext="0" hh:keepLines="0" hh:pageBreakBefore="0" hh:lineWrap="BREAK"/>` +
+    `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="0" suppressLineNumbers="0" checked="0">` +
+    `<hh:align horizontal="${align}" vertical="BASELINE"/>` +
+    `<hh:heading type="NONE" idRef="0" level="0"/>` +
+    `<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>` +
     `<hh:margin>` +
-    `<hh:intent hh:value="${ps.indent}"/>` +
-    `<hh:left hh:value="${ps.leftMargin}"/>` +
-    `<hh:right hh:value="${ps.rightMargin}"/>` +
-    `<hh:prev hh:value="${ps.prevSpacing}"/>` +
-    `<hh:next hh:value="${ps.nextSpacing}"/>` +
+    `<hh:intent value="${ps.indent}"/>` +
+    `<hh:left value="${ps.leftMargin}"/>` +
+    `<hh:right value="${ps.rightMargin}"/>` +
+    `<hh:prev value="${ps.prevSpacing}"/>` +
+    `<hh:next value="${ps.nextSpacing}"/>` +
     `</hh:margin>` +
-    `<hh:lineSpacing hh:type="PERCENT" hh:value="${Math.max(0, ps.lineSpacing)}"/>` +
+    `<hh:lineSpacing type="PERCENT" value="${Math.max(0, ps.lineSpacing)}"/>` +
     `</hh:paraPr>`
   );
 }
@@ -542,18 +544,18 @@ function buildParaPrXml(id: number, ps: HwpParaShape): string {
 function buildStylesXml(styles: HwpStyle[]): string {
   if (styles.length === 0) {
     return (
-      `<hh:styles hh:itemCnt="1">` +
-      `<hh:style hh:id="0" hh:type="PARA" hh:name="바탕글" hh:engName="Normal" hh:paraPrIDRef="0" hh:charPrIDRef="0" hh:nextStyleIDRef="0" hh:langID="1042" hh:lockForm="0"/>` +
+      `<hh:styles itemCnt="1">` +
+      `<hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/>` +
       `</hh:styles>`
     );
   }
   const items = styles
     .map(
       (s, idx) =>
-        `<hh:style hh:id="${idx}" hh:type="PARA" hh:name="${escapeXml(s.name || "Style" + idx)}" hh:engName="${escapeXml(s.engName ?? "")}" hh:paraPrIDRef="${s.paraShapeId}" hh:charPrIDRef="${s.charShapeId}" hh:nextStyleIDRef="${idx}" hh:langID="1042" hh:lockForm="0"/>`
+        `<hh:style id="${idx}" type="PARA" name="${escapeXml(s.name || "Style" + idx)}" engName="${escapeXml(s.engName ?? "")}" paraPrIDRef="${s.paraShapeId}" charPrIDRef="${s.charShapeId}" nextStyleIDRef="${idx}" langID="1042" lockForm="0"/>`
     )
     .join("");
-  return `<hh:styles hh:itemCnt="${styles.length}">${items}</hh:styles>`;
+  return `<hh:styles itemCnt="${styles.length}">${items}</hh:styles>`;
 }
 
 // ============================================================
@@ -594,6 +596,14 @@ function alignToOwpml(a: HwpParaShape["alignment"]): string {
 function buildSectionXml(paragraphs: HwpParagraph[], binEntries: BinEntry[]): string {
   // 본 문단 + 머리말/꼬리말/각주 인라인 보강
   const parts: string[] = [];
+  // 섹션 첫 문단에 secPr(페이지 설정) — 한컴이 섹션을 구성하는 데 필수
+  parts.push(
+    `<hp:p id="${makeParaId()}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+      `<hp:run charPrIDRef="0">${SEC_PR_XML}</hp:run>` +
+      `<hp:run charPrIDRef="0"><hp:t/></hp:run>` +
+      DEFAULT_LINESEG +
+      `</hp:p>`
+  );
   for (const p of paragraphs) {
     parts.push(buildParagraphXml(p, binEntries));
     // 같은 paragraph 안의 header/footer/footnote 컨트롤이 가진 paragraphs 도 본문 흐름에 평탄 출력
@@ -611,7 +621,7 @@ function buildSectionXml(paragraphs: HwpParagraph[], binEntries: BinEntry[]): st
   }
   return (
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-    `<hs:sec xmlns:hs="${NS_HS}" xmlns:hp="${NS_HP}" xmlns:hh="${NS_HH}" xmlns:hc="${NS_HC}">` +
+    `<hs:sec ${OWPML_NS}>` +
     parts.join("") +
     `</hs:sec>`
   );
@@ -636,11 +646,11 @@ function buildParagraphXml(p: HwpParagraph, binEntries: BinEntry[]): string {
   }
 
   if (parts.length === 0) {
-    parts.push(`<hp:run hp:charPrIDRef="0"/>`);
+    parts.push(`<hp:run charPrIDRef="0"/>`);
   }
 
   return (
-    `<hp:p hp:paraPrIDRef="${p.paraShapeId}" hp:styleIDRef="${p.styleId}" hp:pageBreak="0" hp:columnBreak="0" hp:merged="0">` +
+    `<hp:p id="${makeParaId()}" paraPrIDRef="${p.paraShapeId}" styleIDRef="${p.styleId}" pageBreak="0" columnBreak="0" merged="0">` +
     parts.join("") +
     DEFAULT_LINESEG +
     `</hp:p>`
@@ -648,23 +658,55 @@ function buildParagraphXml(p: HwpParagraph, binEntries: BinEntry[]): string {
 }
 
 function buildRunXml(run: HwpRun): string {
-  return `<hp:run hp:charPrIDRef="${run.charShapeId}"><hp:t>${escapeXml(run.text)}</hp:t></hp:run>`;
+  return `<hp:run charPrIDRef="${run.charShapeId}"><hp:t>${escapeXml(run.text)}</hp:t></hp:run>`;
+}
+
+// 이미지 표시 기본 크기(HWPUNIT). 원본 픽셀을 모르므로 고정값 — 한컴이 비율 보정.
+const PIC_WIDTH = 40000;
+const PIC_HEIGHT = 30000;
+
+/**
+ * 한컴 정상 hp:pic 구조(etc/hwpjs_image_test 기준).
+ * orgSz=curSz 1:1, 단위행렬 — 한글이 실제 크기를 재계산한다.
+ */
+function buildPicXml(entry: BinEntry): string {
+  const w = PIC_WIDTH;
+  const h = PIC_HEIGHT;
+  return (
+    `<hp:pic id="${makeParaId()}" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" ` +
+    `lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${makeParaId()}" reverse="0">` +
+    `<hp:offset x="0" y="0"/>` +
+    `<hp:orgSz width="${w}" height="${h}"/>` +
+    `<hp:curSz width="${w}" height="${h}"/>` +
+    `<hp:flip horizontal="0" vertical="0"/>` +
+    `<hp:rotationInfo angle="0" centerX="${(w / 2) | 0}" centerY="${(h / 2) | 0}" rotateimage="1"/>` +
+    `<hp:renderingInfo>` +
+    `<hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>` +
+    `<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>` +
+    `<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>` +
+    `</hp:renderingInfo>` +
+    `<hc:img binaryItemIDRef="${entry.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>` +
+    `<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${w}" y="0"/><hc:pt2 x="${w}" y="${h}"/><hc:pt3 x="0" y="${h}"/></hp:imgRect>` +
+    `<hp:imgClip left="0" right="${w}" top="0" bottom="${h}"/>` +
+    `<hp:inMargin left="0" right="0" top="0" bottom="0"/>` +
+    `<hp:imgDim dimwidth="${w}" dimheight="${h}"/>` +
+    `<hp:effects/>` +
+    `<hp:sz width="${w}" widthRelTo="ABSOLUTE" height="${h}" heightRelTo="ABSOLUTE" protect="0"/>` +
+    `<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" ` +
+    `vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>` +
+    `<hp:outMargin left="0" right="0" top="0" bottom="0"/>` +
+    `</hp:pic>`
+  );
 }
 
 function buildControlXml(ctrl: HwpControl, binEntries: BinEntry[]): string {
   switch (ctrl.kind) {
     case "table":
-      return `<hp:run hp:charPrIDRef="0">${buildTableXml(ctrl, binEntries)}</hp:run>`;
+      return `<hp:run charPrIDRef="0">${buildTableXml(ctrl, binEntries)}</hp:run>`;
     case "picture": {
       const entry = binEntries.find((b) => b.id === `image${ctrl.binDataId}`);
       if (!entry) return "";
-      return (
-        `<hp:run hp:charPrIDRef="0">` +
-        `<hp:pic hp:href="${entry.href}">` +
-        `<hc:img hc:binaryItemIDRef="${entry.id}"/>` +
-        `</hp:pic>` +
-        `</hp:run>`
-      );
+      return `<hp:run charPrIDRef="0">${buildPicXml(entry)}</hp:run>`;
     }
     case "shape": {
       // 도형: 1차 포팅에서는 placeholder. line 은 좌표만 보존.
@@ -684,12 +726,12 @@ function buildControlXml(ctrl: HwpControl, binEntries: BinEntry[]): string {
         ctrl.shapeType === "line" && ctrl.x1 !== undefined
           ? `<hc:startPt x="${ctrl.x1}" y="${ctrl.y1 ?? 0}"/><hc:endPt x="${ctrl.x2 ?? 0}" y="${ctrl.y2 ?? 0}"/>`
           : "";
-      return `<hp:run hp:charPrIDRef="0"><hp:${tag}>${coords}</hp:${tag}></hp:run>`;
+      return `<hp:run charPrIDRef="0"><hp:${tag}>${coords}</hp:${tag}></hp:run>`;
     }
     case "equation": {
       if (ctrl.script.length === 0) return "";
       return (
-        `<hp:run hp:charPrIDRef="0">` +
+        `<hp:run charPrIDRef="0">` +
         `<hp:equation>` +
         `<hp:script>${escapeXml(ctrl.script)}</hp:script>` +
         `</hp:equation>` +
@@ -705,12 +747,26 @@ function buildControlXml(ctrl: HwpControl, binEntries: BinEntry[]): string {
   }
 }
 
+// 본문 가용 폭(HWPUNIT) — SEC_PR_XML 의 pagePr(width 59528, 좌우 margin 8504) 기준.
+const TABLE_BODY_WIDTH = 42520;
+const DEFAULT_ROW_HEIGHT = 2000; // 한글이 실제 높이를 재계산하므로 추정값으로 충분
+
 function buildTableXml(t: HwpTableControl, binEntries: BinEntry[]): string {
+  const colCount = Math.max(1, t.colCount);
+  const rowCount = Math.max(1, t.rowCount);
+  const cellW = Math.max(1, Math.floor(TABLE_BODY_WIDTH / colCount));
+  const tableW = cellW * colCount;
+  const tableH = DEFAULT_ROW_HEIGHT * rowCount;
+
   const rows: HwpTableCell[][] = Array.from({ length: t.rowCount }, () => []);
   for (const cell of t.cells) {
     if (cell.row >= 0 && cell.row < t.rowCount) rows[cell.row].push(cell);
   }
   for (const row of rows) row.sort((a, b) => a.col - b.col);
+
+  const subListAttrs =
+    `id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" ` +
+    `linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0"`;
 
   const trXml = rows
     .map((row) => {
@@ -719,11 +775,20 @@ function buildTableXml(t: HwpTableControl, binEntries: BinEntry[]): string {
           const cellInner = cell.paragraphs
             .map((q) => buildParagraphXml(q, binEntries))
             .join("");
-          const colSpanAttr = cell.colSpan > 1 ? ` hp:colSpan="${cell.colSpan}"` : "";
-          const rowSpanAttr = cell.rowSpan > 1 ? ` hp:rowSpan="${cell.rowSpan}"` : "";
+          const colSpan = Math.max(1, cell.colSpan);
+          const rowSpan = Math.max(1, cell.rowSpan);
+          const cw = cellW * colSpan;
+          const ch = DEFAULT_ROW_HEIGHT * rowSpan;
+          const inner =
+            cellInner ||
+            `<hp:p id="${makeParaId()}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"/>${DEFAULT_LINESEG}</hp:p>`;
           return (
-            `<hp:tc${colSpanAttr}${rowSpanAttr}>` +
-            `<hp:subList>${cellInner || `<hp:p hp:paraPrIDRef="0" hp:styleIDRef="0"><hp:run hp:charPrIDRef="0"/>${DEFAULT_LINESEG}</hp:p>`}</hp:subList>` +
+            `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="0">` +
+            `<hp:subList ${subListAttrs}>${inner}</hp:subList>` +
+            `<hp:cellAddr colAddr="${cell.col}" rowAddr="${cell.row}"/>` +
+            `<hp:cellSpan colSpan="${colSpan}" rowSpan="${rowSpan}"/>` +
+            `<hp:cellSz width="${cw}" height="${ch}"/>` +
+            `<hp:cellMargin left="510" right="510" top="141" bottom="141"/>` +
             `</hp:tc>`
           );
         })
@@ -732,14 +797,16 @@ function buildTableXml(t: HwpTableControl, binEntries: BinEntry[]): string {
     })
     .join("");
 
-  return `<hp:tbl hp:rowCnt="${t.rowCount}" hp:colCnt="${t.colCount}">${trXml}</hp:tbl>`;
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return (
+    `<hp:tbl id="${makeParaId()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" ` +
+    `lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="${rowCount}" colCnt="${colCount}" ` +
+    `cellSpacing="0" borderFillIDRef="0" noAdjust="0">` +
+    `<hp:sz width="${tableW}" widthRelTo="ABSOLUTE" height="${tableH}" heightRelTo="ABSOLUTE" protect="0"/>` +
+    `<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" ` +
+    `vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>` +
+    `<hp:outMargin left="283" right="283" top="283" bottom="283"/>` +
+    `<hp:inMargin left="510" right="510" top="141" bottom="141"/>` +
+    trXml +
+    `</hp:tbl>`
+  );
 }

@@ -170,6 +170,10 @@ tramp
 # Project specific ignores
 # Development reference folders
 hwp2hwpx-java/
+etc/
+
+# Plan/review 작업 산출물 (공식 문서는 docs/ 로)
+tmp/
 
 # Test outputs/extracted artifacts only — vitest 테스트 파일(test/*.test.ts) 은 커밋한다.
 # (test/fixtures/ 만 별도로 ignore — 아래 참조)
@@ -180,4 +184,7 @@ NPM_PUBLISH_GUIDE.md
 
 # Add any project-specific files or patterns here
 # Test fixtures (user-supplied, not committed)
-test/fixtures/
+# 단, e2e 소형 픽스처는 TDD 가 어디서든 통과하도록 예외로 커밋한다.
+test/fixtures/*
+!test/fixtures/e2emd.md
+!test/fixtures/e2emd_img.md

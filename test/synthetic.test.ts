@@ -98,7 +98,7 @@ describe("Synthetic round-trip — buildHwpxFromDocument → HwpxReader", () => 
     const bytes = await buildHwpxFromDocument(doc);
     const zip = await JSZip.loadAsync(bytes);
     const header = await zip.file("Contents/header.xml")!.async("string");
-    expect(header).toMatch(/hh:fontfaces hh:itemCnt="7"/);
+    expect(header).toMatch(/hh:fontfaces itemCnt="7"/);
     expect(header).toContain("함초롬바탕");
     expect(header).toContain("굴림");
     expect(header).toContain("Times New Roman");
@@ -118,7 +118,7 @@ describe("Synthetic round-trip — buildHwpxFromDocument → HwpxReader", () => 
     const zip = await JSZip.loadAsync(bytes);
     expect(Object.keys(zip.files)[0]).toBe("mimetype");
     const mimetype = await zip.file("mimetype")!.async("string");
-    expect(mimetype).toBe("application/owpml");
+    expect(mimetype).toBe("application/hwp+zip");
   });
 });
 
@@ -145,10 +145,10 @@ describe("Synthetic — BorderFill detail preservation", () => {
     const header = await zip.file("Contents/header.xml")!.async("string");
 
     // 4면 보더 모두 등장 (서로 다른 type)
-    expect(header).toMatch(/hh:leftBorder hh:type="SOLID" hh:width="0\.25 mm"/);
-    expect(header).toMatch(/hh:rightBorder hh:type="DASH" hh:width="0\.25 mm" hh:color="#FF0000"/);
-    expect(header).toMatch(/hh:topBorder hh:type="DOT" hh:width="0\.4 mm"/);
-    expect(header).toMatch(/hh:bottomBorder hh:type="DOUBLE" hh:width="0\.5 mm"/);
+    expect(header).toMatch(/hh:leftBorder type="SOLID" width="0\.25 mm"/);
+    expect(header).toMatch(/hh:rightBorder type="DASH" width="0\.25 mm" color="#FF0000"/);
+    expect(header).toMatch(/hh:topBorder type="DOT" width="0\.4 mm"/);
+    expect(header).toMatch(/hh:bottomBorder type="DOUBLE" width="0\.5 mm"/);
   });
 
   it("encodes attr bits 2-4 as slash direction", async () => {
@@ -163,8 +163,8 @@ describe("Synthetic — BorderFill detail preservation", () => {
     const bytes = await buildHwpxFromDocument(doc);
     const zip = await JSZip.loadAsync(bytes);
     const header = await zip.file("Contents/header.xml")!.async("string");
-    expect(header).toMatch(/hh:slash hh:type="SOLID"/);
-    expect(header).toMatch(/hh:backSlash hh:type="NONE"/);
+    expect(header).toMatch(/hh:slash type="SOLID"/);
+    expect(header).toMatch(/hh:backSlash type="NONE"/);
   });
 
   it("emits fillBrush winBrush for solid fill", async () => {
@@ -185,8 +185,8 @@ describe("Synthetic — BorderFill detail preservation", () => {
     const bytes = await buildHwpxFromDocument(doc);
     const zip = await JSZip.loadAsync(bytes);
     const header = await zip.file("Contents/header.xml")!.async("string");
-    expect(header).toContain('hh:winBrush hh:faceColor="#D9D9D9"');
-    expect(header).toContain('hh:hatchStyle="NONE"');
+    expect(header).toContain('hh:winBrush faceColor="#D9D9D9"');
+    expect(header).toContain('hatchStyle="NONE"');
   });
 });
 
